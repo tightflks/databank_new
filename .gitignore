@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Uploads
+uploads/
+test-files/*.xlsx
+test-files/*.xls
+
+# Compiled TypeScript
+*.js
+*.js.map
+!vite.config.ts
+!tailwind.config.js
+!postcss.config.js
+!eslint.config.js

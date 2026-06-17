@@ -1,12 +1,13 @@
-# Excel to PDF Converter - MVP
+# Databank
 
-A modern web application that converts Excel files (.xlsx, .xls) to PDF reports with clean, professional formatting.
+A modern property analysis platform that converts Excel files to professional PDF reports and provides powerful search capabilities for real estate comparables.
 
 ## Tech Stack
 
 ### Backend
 - **Node.js** with **Express** - Fast, minimal web framework
 - **TypeScript** - Type safety and better developer experience
+- **better-sqlite3** - Fast SQLite database for data persistence
 - **xlsx** - Excel file parsing
 - **pdf-lib** - PDF generation
 - **multer** - File upload handling
@@ -163,8 +164,97 @@ Health check endpoint.
 
 **Response:**
 ```json
-{ "status": "ok" }
+{ 
+  "status": "ok",
+  "database": "connected",
+  "uploadCount": 5
+}
 ```
+
+### Database Management Endpoints
+
+#### `GET /api/uploads`
+Get all saved Excel uploads.
+
+**Query Parameters:**
+- `limit` (optional, default: 50) - Number of results per page
+- `offset` (optional, default: 0) - Pagination offset
+
+**Response:**
+```json
+{
+  "uploads": [
+    {
+      "id": 1,
+      "filename": "properties.xlsx",
+      "original_filename": "properties.xlsx",
+      "upload_date": "2024-01-15 10:30:00",
+      "file_size": 245760,
+      "sheet_count": 1,
+      "row_count": 150
+    }
+  ],
+  "total": 10,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+#### `GET /api/uploads/:id`
+Get details of a specific upload.
+
+**Response:**
+```json
+{
+  "id": 1,
+  "filename": "properties.xlsx",
+  "original_filename": "properties.xlsx",
+  "upload_date": "2024-01-15 10:30:00",
+  "file_size": 245760,
+  "sheet_count": 1,
+  "row_count": 150
+}
+```
+
+#### `GET /api/uploads/:id/data`
+Get Excel data for a specific upload.
+
+**Response:**
+```json
+{
+  "upload": { /* upload metadata */ },
+  "data": [
+    ["Header1", "Header2", "Header3"],
+    ["Value1", "Value2", "Value3"]
+  ],
+  "rowCount": 150
+}
+```
+
+#### `DELETE /api/uploads/:id`
+Delete a saved upload and its data.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Upload deleted successfully"
+}
+```
+
+## Data Persistence
+
+✅ **SQLite Database**
+- All Excel uploads are automatically saved to a local SQLite database
+- Data persists across server restarts
+- Database location: `backend/data/databank.db`
+- Uses WAL mode for better performance
+- Automatic indexing for fast queries
+
+**Database Schema:**
+- `uploads` - Stores upload metadata (filename, date, size, etc.)
+- `excel_data` - Stores the actual Excel rows as JSON
+- Foreign key constraints ensure data integrity
 
 ## Development
 

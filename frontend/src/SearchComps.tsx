@@ -18,6 +18,21 @@ interface Property {
   address: string;
   zip: string;
   taxOwner: string;
+  update_count?: number;
+  last_updated?: string;
+}
+
+interface PropertyHistory {
+  id: number;
+  upload_id: number;
+  original_filename: string;
+  upload_date: string;
+  snapshot_date: string;
+  salePrice: string;
+  saleDate: string;
+  taxOwner: string;
+  insiderDate: string;
+  units: string;
 }
 
 interface Filters {
@@ -63,6 +78,8 @@ function SearchComps() {
   const [maxPrice, setMaxPrice] = useState('');
   const [minUnits, setMinUnits] = useState('');
   const [maxUnits, setMaxUnits] = useState('');
+  const [isGlobalSearch, setIsGlobalSearch] = useState(false);
+  const [propertyHistories, setPropertyHistories] = useState<Record<number, PropertyHistory[]>>({});
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -181,8 +198,40 @@ function SearchComps() {
     } catch (err: any) {
       console.error('Error loading data:', err);
       setError(err.response?.data?.error || 'Failed to load data from file');
+      setLoading(false);
+    }
+  };
+
+  const loadGlobalProperties = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.get(`${API_URL}/api/properties/search`);
+      setProperties(response.data.properties);
+      setFilteredProperties(response.data.properties);
+      setFilters(response.data.filters);
+      setIsGlobalSearch(true);
+      setSelectedUploadName('Global Database');
+      // Set a dummy upload id to show the results table
+      setSelectedUploadId(-1);
+    } catch (err: any) {
+      console.error('Error loading global properties:', err);
+      setError('Failed to load global database');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPropertyHistory = async (propertyId: number) => {
+    if (propertyHistories[propertyId]) return;
+    try {
+      const response = await axios.get(`${API_URL}/api/properties/${propertyId}/history`);
+      setPropertyHistories(prev => ({
+        ...prev,
+        [propertyId]: response.data.history
+      }));
+    } catch (err) {
+      console.error('Error fetching history:', err);
     }
   };
 
@@ -320,10 +369,24 @@ function SearchComps() {
       </div>
 
       {/* Upload Section */}
-      {!file && !selectedUploadId && (
+      {!file && !selectedUploadId && !isGlobalSearch && (
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <h2 className="text-2xl font-bold text-gray-800 mb-4">Databank Comps Search</h2>
-          <p className="text-gray-600 mb-6">Select a saved upload or upload a new Excel file to start searching</p>
+          
+          {/* Global Database Search */}
+          <div className="mb-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl hover:shadow-lg transition-all text-center">
+            <h3 className="text-xl font-bold text-gray-800 mb-2">Search Entire Database</h3>
+            <p className="text-gray-600 mb-4">Search across all properties and view their historical updates</p>
+            <button
+              onClick={() => loadGlobalProperties()}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold transition-colors flex items-center justify-center gap-2 mx-auto"
+            >
+              <Database className="w-5 h-5" />
+              Load Global Database
+            </button>
+          </div>
+
+          <p className="text-gray-600 mb-6">Or select a saved upload or upload a new Excel file to start searching</p>
           
           {/* Saved Uploads */}
           {savedUploads.length > 0 && (
@@ -383,13 +446,13 @@ function SearchComps() {
       )}
 
       {/* Search and Filters */}
-      {(file || selectedUploadId) && properties.length > 0 && (
+      {(file || selectedUploadId || isGlobalSearch) && properties.length > 0 && (
         <div className="bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <FileSpreadsheet className="w-6 h-6 text-blue-600" />
               <div>
-                <h3 className="font-semibold text-gray-800">{file ? file.name : selectedUploadName}</h3>
+                <h3 className="font-semibold text-gray-800">{isGlobalSearch ? 'Global Database' : (file ? file.name : selectedUploadName)}</h3>
                 <p className="text-sm text-gray-500">{properties.length} properties loaded</p>
               </div>
             </div>
@@ -398,6 +461,7 @@ function SearchComps() {
                 setFile(null);
                 setSelectedUploadId(null);
                 setSelectedUploadName('');
+                setIsGlobalSearch(false);
                 setProperties([]);
                 setFilteredProperties([]);
                 setFilters(null);
@@ -575,6 +639,7 @@ function SearchComps() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sale Price</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Units</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                  {isGlobalSearch && <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Updates</th>}
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase"></th>
                 </tr>
               </thead>
@@ -604,9 +669,22 @@ function SearchComps() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">{property.units || '-'}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{property.insiderDate || '-'}</td>
+                      {isGlobalSearch && (
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                            {property.update_count || 1}
+                          </span>
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <button
-                          onClick={() => setExpandedRow(expandedRow === property.id ? null : property.id)}
+                          onClick={() => {
+                            const isExpanding = expandedRow !== property.id;
+                            setExpandedRow(isExpanding ? property.id : null);
+                            if (isExpanding && isGlobalSearch) {
+                              fetchPropertyHistory(property.id);
+                            }
+                          }}
                           className="text-blue-600 hover:text-blue-700"
                         >
                           {expandedRow === property.id ? (
@@ -619,8 +697,8 @@ function SearchComps() {
                     </tr>
                     {expandedRow === property.id && (
                       <tr className="bg-gray-50">
-                        <td colSpan={7} className="px-4 py-4">
-                          <div className="grid grid-cols-2 gap-4 text-sm">
+                        <td colSpan={isGlobalSearch ? 8 : 7} className="px-4 py-4">
+                          <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                             <div>
                               <p className="text-gray-500 text-xs">Address</p>
                               <p className="font-medium">{property.address || '-'}</p>
@@ -646,6 +724,45 @@ function SearchComps() {
                               <p className="font-medium">{property.saleDate || '-'}</p>
                             </div>
                           </div>
+
+                          {isGlobalSearch && (
+                            <div className="mt-4 pt-4 border-t border-gray-200">
+                              <h4 className="font-semibold text-gray-800 mb-3">Update History</h4>
+                              {!propertyHistories[property.id] ? (
+                                <div className="flex items-center gap-2 text-gray-500">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Loading history...
+                                </div>
+                              ) : propertyHistories[property.id].length === 0 ? (
+                                <p className="text-gray-500">No history available</p>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-sm">
+                                    <thead className="bg-white">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Source File</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Sale Price</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Insider Date</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Units</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {propertyHistories[property.id].map(hist => (
+                                        <tr key={hist.id}>
+                                          <td className="px-3 py-2">{new Date(hist.snapshot_date).toLocaleDateString()}</td>
+                                          <td className="px-3 py-2 text-gray-500">{hist.original_filename}</td>
+                                          <td className="px-3 py-2 font-medium">{formatCurrency(hist.salePrice)}</td>
+                                          <td className="px-3 py-2">{hist.insiderDate || '-'}</td>
+                                          <td className="px-3 py-2">{hist.units || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     )}

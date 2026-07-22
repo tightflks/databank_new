@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
-import { Upload, FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Search, Eye, Database, Calendar, FileArchive, Users } from 'lucide-react';
+import { Upload, FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Search, Eye, Database, Calendar, FileArchive, Users, Trash2 } from 'lucide-react';
 import SearchComps from './SearchComps';
 import UserDashboard from './UserDashboard';
+import SqlDataViewer from './SqlDataViewer';
+import ComparisonView from './ComparisonView';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -29,7 +31,8 @@ interface SavedReport {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'search' | 'history' | 'user'>('generate');
+  const [activeTab, setActiveTab] = useState<'generate' | 'search' | 'sqldata' | 'history' | 'user'>('generate');
+  const [compareUploadId, setCompareUploadId] = useState<number | null>(null);
   const [uploads, setUploads] = useState<SavedUpload[]>([]);
   const [reports, setReports] = useState<SavedReport[]>([]);
   const [loadingUploads, setLoadingUploads] = useState(false);
@@ -55,7 +58,7 @@ function App() {
       setFile(selectedFile);
       setError(null);
       setSuccess(false);
-      
+
       // Automatically fetch available dates
       await fetchDates(selectedFile);
     }
@@ -73,7 +76,7 @@ function App() {
       setFile(droppedFile);
       setError(null);
       setSuccess(false);
-      
+
       // Automatically fetch available dates
       await fetchDates(droppedFile);
     }
@@ -108,8 +111,8 @@ function App() {
   };
 
   const handleDateToggle = (date: string) => {
-    setSelectedDates(prev => 
-      prev.includes(date) 
+    setSelectedDates(prev =>
+      prev.includes(date)
         ? prev.filter(d => d !== date)
         : [...prev, date]
     );
@@ -132,7 +135,7 @@ function App() {
 
     const formData = new FormData();
     formData.append('file', file);
-    
+
     // Add selected date if any
     if (selectedDates.length > 0) {
       formData.append('filterDate', selectedDates[0]);
@@ -167,6 +170,17 @@ function App() {
       setError('Failed to convert file. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteUpload = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this upload?')) return;
+    try {
+      await axios.delete(`${API_URL}/api/uploads/${id}`);
+      fetchUploads();
+    } catch (err) {
+      console.error('Error deleting upload:', err);
+      alert('Failed to delete upload');
     }
   };
 
@@ -227,7 +241,7 @@ function App() {
 
     const formData = new FormData();
     formData.append('file', file);
-    
+
     // Add selected date if any
     if (selectedDates.length > 0) {
       formData.append('filterDate', selectedDates[0]);
@@ -266,58 +280,75 @@ function App() {
             {activeTab === 'user' ? 'User Dashboard' : 'Databank Generator (Admin)'}
           </h1>
           <p className="text-lg text-gray-600">
-            {activeTab === 'user' 
-              ? 'Browse and access property reports' 
+            {activeTab === 'user'
+              ? 'Browse and access property reports'
               : 'Transform your Excel data into professional PDF reports'}
           </p>
         </div>
 
         {/* Navigation Tabs */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <button
             onClick={() => setActiveTab('user')}
-            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'user'
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
-                : 'bg-white/50 text-gray-600 hover:bg-white/80'
-            }`}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${activeTab === 'user'
+              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
+              : 'bg-white/50 text-gray-600 hover:bg-white/80'
+              }`}
           >
             <Users className="w-5 h-5" />
             User View
           </button>
           <button
             onClick={() => setActiveTab('generate')}
-            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'generate'
-                ? 'bg-white text-blue-600 shadow-lg'
-                : 'bg-white/50 text-gray-600 hover:bg-white/80'
-            }`}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${activeTab === 'generate'
+              ? 'bg-white text-blue-600 shadow-lg'
+              : 'bg-white/50 text-gray-600 hover:bg-white/80'
+              }`}
           >
             <Upload className="w-5 h-5" />
             Generate
           </button>
           <button
             onClick={() => setActiveTab('search')}
-            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'search'
-                ? 'bg-white text-blue-600 shadow-lg'
-                : 'bg-white/50 text-gray-600 hover:bg-white/80'
-            }`}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${activeTab === 'search'
+              ? 'bg-white text-blue-600 shadow-lg'
+              : 'bg-white/50 text-gray-600 hover:bg-white/80'
+              }`}
           >
             <Search className="w-5 h-5" />
             Search
           </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'history'
-                ? 'bg-white text-blue-600 shadow-lg'
-                : 'bg-white/50 text-gray-600 hover:bg-white/80'
-            }`}
+          {/* <button
+            onClick={() => setActiveTab('sqldata')}
+            className={`d-none py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${activeTab === 'sqldata'
+              ? 'bg-white text-blue-600 shadow-lg'
+              : 'bg-white/50 text-gray-600 hover:bg-white/80'
+              }`}
           >
             <Database className="w-5 h-5" />
-            History
+            Live DB
+          </button> */}
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2  ${activeTab === 'history'
+              ? 'bg-white text-blue-600 shadow-lg'
+              : 'bg-white/50 text-gray-600 hover:bg-white/80'
+              }`}
+          >
+            <Users className="w-5 h-5" />
+            <span>History</span>
           </button>
+
+          {/* <button
+            onClick={() => setActiveTab('compare')}
+            className={`flex items-center space-x-2 px-4 py-3 font-medium transition-colors border-b-2 ${activeTab === 'compare'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+          >
+            <FileSpreadsheet className="w-5 h-5" />
+            <span>Comparison Engine</span>
+          </button> */}
         </div>
 
         {/* Tab Content */}
@@ -332,213 +363,209 @@ function App() {
               </p>
             </div>
 
-        {/* Upload Area */}
-        {step === 'upload' && (
-        <div
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${
-            file 
-              ? 'border-green-400 bg-green-50' 
-              : 'border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50'
-          }`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handleFileChange}
-            className="hidden"
-            id="file-upload"
-          />
-          
-          {!file ? (
-            <label htmlFor="file-upload" className="cursor-pointer">
-              <Upload className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-              <p className="text-lg font-medium text-gray-700 mb-2">
-                Drop your Excel file here or click to browse
-              </p>
-              <p className="text-sm text-gray-500">Supports .xlsx and .xls files</p>
-            </label>
-          ) : (
-            <div className="flex items-center justify-center gap-3">
-              <FileSpreadsheet className="w-12 h-12 text-green-600" />
-              <div className="text-left">
-                <p className="font-medium text-gray-800">{file.name}</p>
-                <p className="text-sm text-gray-500">
-                  {(file.size / 1024).toFixed(2)} KB
-                </p>
-              </div>
-              {loading && (
-                <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-              )}
-            </div>
-          )}
-        </div>
-        )}
-
-        {/* Date Selection */}
-        {step === 'select' && (
-          availableDates.length > 0 ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-800">
-                Available Insider Dates ({availableDates.length})
-              </h2>
-              <button
-                onClick={handleSelectAll}
-                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+            {/* Upload Area */}
+            {step === 'upload' && (
+              <div
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${file
+                  ? 'border-green-400 bg-green-50'
+                  : 'border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50'
+                  }`}
               >
-                {selectedDates.length === availableDates.length ? 'Deselect All' : 'Select All'}
-              </button>
-            </div>
-            
-            <div className="max-h-96 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-4">
-              {availableDates.map(({ date, count }) => (
-                <label
-                  key={date}
-                  className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedDates.includes(date)}
-                    onChange={() => handleDateToggle(date)}
-                    className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div className="flex-1 flex items-center justify-between">
-                    <span className="text-gray-800 font-medium">{date}</span>
-                    <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                      {count} report{count !== 1 ? 's' : ''}
-                    </span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="file-upload"
+                />
+
+                {!file ? (
+                  <label htmlFor="file-upload" className="cursor-pointer">
+                    <Upload className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+                    <p className="text-lg font-medium text-gray-700 mb-2">
+                      Drop your Excel file here or click to browse
+                    </p>
+                    <p className="text-sm text-gray-500">Supports .xlsx and .xls files</p>
+                  </label>
+                ) : (
+                  <div className="flex items-center justify-center gap-3">
+                    <FileSpreadsheet className="w-12 h-12 text-green-600" />
+                    <div className="text-left">
+                      <p className="font-medium text-gray-800">{file.name}</p>
+                      <p className="text-sm text-gray-500">
+                        {(file.size / 1024).toFixed(2)} KB
+                      </p>
+                    </div>
+                    {loading && (
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+                    )}
                   </div>
-                </label>
-              ))}
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setStep('upload');
-                  setSelectedDates([]);
-                  setAvailableDates([]);
-                  setFile(null);
-                  if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                  }
-                }}
-                className="flex-1 py-3 rounded-xl font-semibold text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
-              >
-                Upload Different File
-              </button>
-              <button
-                onClick={() => setStep('convert')}
-                disabled={selectedDates.length === 0}
-                className={`flex-2 py-3 px-6 rounded-xl font-semibold text-white transition-colors ${
-                  selectedDates.length === 0
-                    ? 'bg-gray-300 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                }`}
-              >
-                Continue with {selectedDates.length} date{selectedDates.length !== 1 ? 's' : ''}
-              </button>
-            </div>
-          </div>
-          ) : (
-            <div className="text-center py-8">
-              <AlertCircle className="w-16 h-16 mx-auto text-yellow-500 mb-4" />
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">No Insider Dates Found</h3>
-              <p className="text-gray-600 mb-4">The uploaded file doesn't contain any "Insider Date" column or the dates couldn't be extracted.</p>
-              <button
-                onClick={() => {
-                  setStep('upload');
-                  setFile(null);
-                  if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                  }
-                }}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Upload Different File
-              </button>
-            </div>
-          )
-        )}
-
-        {/* Convert Confirmation */}
-        {step === 'convert' && (
-          <div className="space-y-4">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-              <p className="text-sm text-blue-800">
-                <strong>Selected Date:</strong> {selectedDates[0]}
-              </p>
-              <p className="text-xs text-blue-600 mt-1">
-                PDF will include: Property Profile, Property Details, Financial Highlights, and Comments
-              </p>
-              <p className="text-xs text-blue-600 mt-1">
-                Table of Contents + Individual reports for each property
-              </p>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setStep('select')}
-                className="flex-1 py-3 rounded-xl font-semibold text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
-              >
-                Back to Selection
-              </button>
-              <button
-                onClick={handlePreview}
-                disabled={loading}
-                className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
-                  loading
-                    ? 'bg-gray-300 cursor-not-allowed'
-                    : 'bg-green-600 hover:bg-green-700 text-white shadow-lg hover:shadow-xl'
-                }`}
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Loading...
-                  </>
-                ) : (
-                  <>
-                    <Eye className="w-5 h-5" />
-                    Preview Online
-                  </>
                 )}
-              </button>
-              <button
-                onClick={handleConvert}
-                disabled={loading}
-                className={`flex-1 py-3 px-6 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 ${
-                  loading
-                    ? 'bg-gray-300 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700 shadow-lg hover:shadow-xl'
-                }`}
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Converting...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-5 h-5" />
-                    Generate PDF
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        )}
+              </div>
+            )}
 
-        {/* Error Message */}
-        {error && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-            <p className="text-red-700">{error}</p>
-          </div>
-        )}
+            {/* Date Selection */}
+            {step === 'select' && (
+              availableDates.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-gray-800">
+                      Available Insider Dates ({availableDates.length})
+                    </h2>
+                    <button
+                      onClick={handleSelectAll}
+                      className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      {selectedDates.length === availableDates.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                  </div>
+
+                  <div className="max-h-96 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-4">
+                    {availableDates.map(({ date, count }) => (
+                      <label
+                        key={date}
+                        className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedDates.includes(date)}
+                          onChange={() => handleDateToggle(date)}
+                          className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                        />
+                        <div className="flex-1 flex items-center justify-between">
+                          <span className="text-gray-800 font-medium">{date}</span>
+                          <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                            {count} report{count !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={() => {
+                        setStep('upload');
+                        setSelectedDates([]);
+                        setAvailableDates([]);
+                        setFile(null);
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = '';
+                        }
+                      }}
+                      className="flex-1 py-3 rounded-xl font-semibold text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
+                    >
+                      Upload Different File
+                    </button>
+                    <button
+                      onClick={() => setStep('convert')}
+                      disabled={selectedDates.length === 0}
+                      className={`flex-2 py-3 px-6 rounded-xl font-semibold text-white transition-colors ${selectedDates.length === 0
+                        ? 'bg-gray-300 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
+                    >
+                      Continue with {selectedDates.length} date{selectedDates.length !== 1 ? 's' : ''}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <AlertCircle className="w-16 h-16 mx-auto text-yellow-500 mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-800 mb-2">No Insider Dates Found</h3>
+                  <p className="text-gray-600 mb-4">The uploaded file doesn't contain any "Insider Date" column or the dates couldn't be extracted.</p>
+                  <button
+                    onClick={() => {
+                      setStep('upload');
+                      setFile(null);
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    Upload Different File
+                  </button>
+                </div>
+              )
+            )}
+
+            {/* Convert Confirmation */}
+            {step === 'convert' && (
+              <div className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                  <p className="text-sm text-blue-800">
+                    <strong>Selected Date:</strong> {selectedDates[0]}
+                  </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    PDF will include: Property Profile, Property Details, Financial Highlights, and Comments
+                  </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    Table of Contents + Individual reports for each property
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setStep('select')}
+                    className="flex-1 py-3 rounded-xl font-semibold text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
+                  >
+                    Back to Selection
+                  </button>
+                  <button
+                    onClick={handlePreview}
+                    disabled={loading}
+                    className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${loading
+                      ? 'bg-gray-300 cursor-not-allowed'
+                      : 'bg-green-600 hover:bg-green-700 text-white shadow-lg hover:shadow-xl'
+                      }`}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-5 h-5" />
+                        Preview Online
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={handleConvert}
+                    disabled={loading}
+                    className={`flex-1 py-3 px-6 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 ${loading
+                      ? 'bg-gray-300 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700 shadow-lg hover:shadow-xl'
+                      }`}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Converting...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-5 h-5" />
+                        Generate PDF
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {error && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+                <p className="text-red-700">{error}</p>
+              </div>
+            )}
 
             {/* Success Message */}
             {success && (
@@ -550,8 +577,20 @@ function App() {
           </div>
         ) : activeTab === 'search' ? (
           <SearchComps />
+        ) : activeTab === 'sqldata' ? (
+          <SqlDataViewer />
         ) : activeTab === 'user' ? (
           <UserDashboard />
+        ) : activeTab === 'compare' ? (
+          compareUploadId ? (
+            <ComparisonView uploadId={compareUploadId} />
+          ) : (
+            <div className="flex flex-col items-center justify-center py-24 text-gray-500">
+              <FileSpreadsheet className="h-16 w-16 mb-4 text-gray-300" />
+              <p className="text-lg font-medium text-gray-700">No Upload Selected for Comparison</p>
+              <p className="text-sm text-gray-400 mt-2">Go to SQL Data tab and select an upload to compare.</p>
+            </div>
+          )
         ) : (
           <div className="space-y-6">
             {/* Saved Reports Section */}
@@ -692,13 +731,25 @@ function App() {
                               <div>
                                 <span className="font-medium">Sheets:</span> {upload.sheet_count}
                               </div>
+                              <div className="flex justify-end gap-2 mt-4">
+                                <button
+                                  onClick={() => {
+                                    setCompareUploadId(upload.id);
+                                    setActiveTab('compare');
+                                  }}
+                                  className="text-sm px-3 py-1.5 text-blue-600 border border-blue-200 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
+                                >
+                                  <FileSpreadsheet className="w-4 h-4" /> Compare
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUpload(upload.id)}
+                                  className="text-sm px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1"
+                                >
+                                  <Trash2 className="w-4 h-4" /> Delete
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2 ml-4">
-                          <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
-                            Saved
-                          </span>
                         </div>
                       </div>
                     </div>

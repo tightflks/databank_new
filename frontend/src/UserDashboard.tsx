@@ -59,6 +59,7 @@ function UserDashboard() {
   const [maxUnits, setMaxUnits] = useState('');
   const [showCountyBreakdown, setShowCountyBreakdown] = useState(false);
   const [showZipBreakdown, setShowZipBreakdown] = useState(false);
+  const [propertyHistories, setPropertyHistories] = useState<Record<number, any[]>>({});
 
   useEffect(() => {
     fetchReports();
@@ -102,63 +103,29 @@ function UserDashboard() {
 
   const loadLatestUpload = async () => {
     try {
-      const uploadsResponse = await axios.get(`${API_URL}/api/uploads?database_type=${databaseType}`);
-      const uploads = uploadsResponse.data.uploads;
+      const response = await axios.get(`${API_URL}/api/properties/search`);
+      const processedProperties = response.data.properties;
       
-      if (uploads.length === 0) return;
-      
-      // Get the latest upload (first one, as they're sorted by date DESC)
-      const latestUpload = uploads[0];
-      
-      // Load the Excel data
-      const dataResponse = await axios.get(`${API_URL}/api/uploads/${latestUpload.id}/data`);
-      const excelData = dataResponse.data.data;
-      
-      if (!excelData || excelData.length === 0) return;
-      
-      const headers = excelData[0];
-      const dataRows = excelData.slice(1);
-      
-      const processedProperties = dataRows.map((row: any[]) => {
-        const getCell = (header: string) => {
-          const idx = headers.findIndex((h: string) => h && h.trim().toLowerCase() === header.toLowerCase());
-          return idx >= 0 ? (row[idx] || '') : '';
-        };
-        
-        return {
-          propertyName: String(getCell('P NAME')).trim(),
-          city: String(getCell('P CITY')).trim(),
-          county: String(getCell('COUNTY')).trim(),
-          marketArea: String(getCell('MARKET AREA')).trim(),
-          insiderDate: String(getCell('INSIDER DATE')).trim(),
-          salePrice: String(getCell('SALE PRICE')).trim(),
-          units: String(getCell('UNITS COMPLETED')).trim(),
-          address: String(getCell('P STREET NUMBER')).trim() + ' ' + String(getCell('P STREET NAME')).trim(),
-          zip: String(getCell('P ZIP')).trim(),
-          district: String(getCell('DISTRICT2')).trim(),
-          parcel: String(getCell('PARCEL')).trim(),
-          taxOwner: String(getCell('TAX OWNER')).trim(),
-          loanAmount: String(getCell('$ LOAN')).trim(),
-          raw: row
-        };
-      }).filter((p: Property) => p.propertyName);
-      
-      const cities = [...new Set(processedProperties.map((p: Property) => p.city).filter(Boolean))] as string[];
-      const counties = [...new Set(processedProperties.map((p: Property) => p.county).filter(Boolean))] as string[];
-      const marketAreas = [...new Set(processedProperties.map((p: Property) => p.marketArea).filter(Boolean))] as string[];
-      const dates = [...new Set(processedProperties.map((p: Property) => p.insiderDate).filter(Boolean))] as string[];
-      
-      const prices = processedProperties.map((p: Property) => parseFloat(p.salePrice?.replace(/[^0-9.-]/g, '') || '0')).filter((p: number) => p > 0);
-      const priceRange = prices.length > 0 ? { min: Math.min(...prices), max: Math.max(...prices) } : { min: 0, max: 0 };
-      
-      const unitsValues = processedProperties.map((p: Property) => parseInt(p.units?.replace(/[^0-9]/g, '') || '0')).filter((u: number) => u > 0);
-      const unitsRange = unitsValues.length > 0 ? { min: Math.min(...unitsValues), max: Math.max(...unitsValues) } : { min: 0, max: 0 };
+      const { cities, counties, marketAreas, dates, priceRange, unitsRange } = response.data.filters;
       
       setProperties(processedProperties);
       setFilteredProperties(processedProperties);
       setFilters({ cities, counties, marketAreas, dates, priceRange, unitsRange });
     } catch (err) {
-      console.error('Error loading latest upload:', err);
+      console.error('Error loading properties database:', err);
+    }
+  };
+
+  const fetchPropertyHistory = async (propertyId: number) => {
+    if (propertyHistories[propertyId]) return;
+    try {
+      const response = await axios.get(`${API_URL}/api/properties/${propertyId}/history`);
+      setPropertyHistories(prev => ({
+        ...prev,
+        [propertyId]: response.data.history
+      }));
+    } catch (err) {
+      console.error('Error fetching history:', err);
     }
   };
 
@@ -166,13 +133,19 @@ function UserDashboard() {
     let filtered = [...properties];
     
     if (propertySearchText.trim()) {
-      const search = propertySearchText.toLowerCase();
-      filtered = filtered.filter(p => 
-        p.propertyName.toLowerCase().includes(search) ||
-        p.city.toLowerCase().includes(search) ||
-        p.address.toLowerCase().includes(search) ||
-        p.county.toLowerCase().includes(search)
-      );
+      const searchTerms = propertySearchText.toLowerCase().trim().split(' ').filter(t => t.length > 0);
+      filtered = filtered.filter(p => {
+        const searchableText = [
+          p.propertyName,
+          p.city,
+          p.address,
+          p.county,
+          p.marketArea,
+          p.historyText
+        ].filter(Boolean).join(' ').toLowerCase();
+        
+        return searchTerms.every(term => searchableText.includes(term));
+      });
     }
     
     if (selectedCity) filtered = filtered.filter(p => p.city === selectedCity);
@@ -654,19 +627,35 @@ function UserDashboard() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Units</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Price</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Updates</th>
                     <th className="px-4 py-3"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {filteredProperties.map((property, idx) => (
                     <>
-                      <tr key={idx} className="hover:bg-gray-50 cursor-pointer" onClick={() => setExpandedRow(expandedRow === idx ? null : idx)}>
+                      <tr 
+                        key={idx} 
+                        className="hover:bg-gray-50 cursor-pointer" 
+                        onClick={() => {
+                          const isExpanding = expandedRow !== idx;
+                          setExpandedRow(isExpanding ? idx : null);
+                          if (isExpanding && property.id) {
+                            fetchPropertyHistory(property.id);
+                          }
+                        }}
+                      >
                         <td className="px-4 py-3 text-sm font-medium text-gray-900">{property.propertyName}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.city}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.county}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.units}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.salePrice}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.insiderDate}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                            {property.update_count || 1}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-sm">
                           {expandedRow === idx ? (
                             <ChevronUp className="w-5 h-5 text-gray-400" />
@@ -677,8 +666,8 @@ function UserDashboard() {
                       </tr>
                       {expandedRow === idx && (
                         <tr>
-                          <td colSpan={7} className="px-4 py-4 bg-gray-50">
-                            <div className="grid grid-cols-2 gap-4 text-sm">
+                          <td colSpan={8} className="px-4 py-4 bg-gray-50">
+                            <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                               <div><span className="font-semibold">Address:</span> {property.address}</div>
                               <div><span className="font-semibold">Zip:</span> {property.zip}</div>
                               <div><span className="font-semibold">Market Area:</span> {property.marketArea}</div>
@@ -686,6 +675,47 @@ function UserDashboard() {
                               <div><span className="font-semibold">Parcel:</span> {property.parcel}</div>
                               <div><span className="font-semibold">Tax Owner:</span> {property.taxOwner}</div>
                               <div><span className="font-semibold">Loan Amount:</span> {property.loanAmount}</div>
+                            </div>
+
+                            <div className="mt-4 pt-4 border-t border-gray-200">
+                              <h4 className="font-semibold text-gray-800 mb-3">Update History</h4>
+                              {!propertyHistories[property.id] ? (
+                                <div className="flex items-center gap-2 text-gray-500">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Loading history...
+                                </div>
+                              ) : propertyHistories[property.id].length === 0 ? (
+                                <p className="text-gray-500">No history available</p>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-sm bg-white rounded-lg overflow-hidden border border-gray-200">
+                                    <thead className="bg-gray-100">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Source File</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Sale Price</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Insider Date</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Units</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">District</th>
+                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Loan</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                      {propertyHistories[property.id].map(hist => (
+                                        <tr key={hist.id}>
+                                          <td className="px-3 py-2">{new Date(hist.snapshot_date).toLocaleDateString()}</td>
+                                          <td className="px-3 py-2 text-gray-500">{hist.original_filename}</td>
+                                          <td className="px-3 py-2 font-medium">{hist.salePrice}</td>
+                                          <td className="px-3 py-2">{hist.insiderDate || '-'}</td>
+                                          <td className="px-3 py-2">{hist.units || '-'}</td>
+                                          <td className="px-3 py-2">{hist.district || '-'}</td>
+                                          <td className="px-3 py-2">{hist.loanAmount || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
                             </div>
                           </td>
                         </tr>

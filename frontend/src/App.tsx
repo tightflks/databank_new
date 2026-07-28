@@ -5,7 +5,7 @@ import { Upload, FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, F
 import SearchComps from './SearchComps';
 import UserDashboard from './UserDashboard';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 interface SavedUpload {
   id: number;

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin } from 'lucide-react';
+import { formatExcelDate } from './utils/excelDate';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 interface SavedReport {
   id: number;
@@ -130,7 +131,7 @@ function UserDashboard() {
           city: String(getCell('P CITY')).trim(),
           county: String(getCell('COUNTY')).trim(),
           marketArea: String(getCell('MARKET AREA')).trim(),
-          insiderDate: String(getCell('INSIDER DATE')).trim(),
+          insiderDate: formatExcelDate(getCell('INSIDER DATE')),
           salePrice: String(getCell('SALE PRICE')).trim(),
           units: String(getCell('UNITS COMPLETED')).trim(),
           address: String(getCell('P STREET NUMBER')).trim() + ' ' + String(getCell('P STREET NAME')).trim(),
@@ -166,13 +167,18 @@ function UserDashboard() {
     let filtered = [...properties];
     
     if (propertySearchText.trim()) {
-      const search = propertySearchText.toLowerCase();
-      filtered = filtered.filter(p => 
-        p.propertyName.toLowerCase().includes(search) ||
-        p.city.toLowerCase().includes(search) ||
-        p.address.toLowerCase().includes(search) ||
-        p.county.toLowerCase().includes(search)
-      );
+      const tokens = propertySearchText.toLowerCase().split(/\s+/).filter(Boolean);
+      filtered = filtered.filter(p => {
+        const haystack = [
+          p.propertyName,
+          p.city,
+          p.address,
+          p.county,
+          p.marketArea,
+          p.taxOwner,
+        ].filter(Boolean).join(' ').toLowerCase();
+        return tokens.every(token => haystack.includes(token));
+      });
     }
     
     if (selectedCity) filtered = filtered.filter(p => p.city === selectedCity);

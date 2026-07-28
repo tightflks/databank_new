@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Search, Download, FileSpreadsheet, Upload, Loader2, AlertCircle, ChevronDown, ChevronUp, Database } from 'lucide-react';
+import { formatExcelDate } from './utils/excelDate';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 interface Property {
   id: number;
@@ -94,7 +95,11 @@ function SearchComps() {
       const getColIndex = (colName: string) => headers.findIndex((h: string) => h && h.trim() === colName);
       const getCellValue = (row: any[], colName: string) => {
         const idx = getColIndex(colName);
-        return idx !== -1 && row[idx] ? String(row[idx]).trim() : '';
+        if (idx === -1 || row[idx] === undefined || row[idx] === null || row[idx] === '') return '';
+        if (colName.toUpperCase().includes('DATE')) {
+          return formatExcelDate(row[idx]);
+        }
+        return String(row[idx]).trim();
       };
 
       const processedProperties = rows.map((row: any[], index: number) => ({
@@ -189,17 +194,20 @@ function SearchComps() {
   const applyFilters = () => {
     let filtered = [...properties];
 
-    // Text search across multiple fields
-    if (searchText) {
-      const search = searchText.toLowerCase();
-      filtered = filtered.filter(p =>
-        p.propertyName?.toLowerCase().includes(search) ||
-        p.city?.toLowerCase().includes(search) ||
-        p.address?.toLowerCase().includes(search) ||
-        p.county?.toLowerCase().includes(search) ||
-        p.marketArea?.toLowerCase().includes(search) ||
-        p.taxOwner?.toLowerCase().includes(search)
-      );
+    // Tokenized text search: every word must match at least one field
+    if (searchText.trim()) {
+      const tokens = searchText.toLowerCase().split(/\s+/).filter(Boolean);
+      filtered = filtered.filter(p => {
+        const haystack = [
+          p.propertyName,
+          p.city,
+          p.address,
+          p.county,
+          p.marketArea,
+          p.taxOwner,
+        ].filter(Boolean).join(' ').toLowerCase();
+        return tokens.every(token => haystack.includes(token));
+      });
     }
 
     if (selectedCity) {

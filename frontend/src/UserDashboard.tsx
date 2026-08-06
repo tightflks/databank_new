@@ -66,6 +66,7 @@ function UserDashboard() {
   const [selectedCounties, setSelectedCounties] = useState<string[]>([]);
   const [countyDropdownOpen, setCountyDropdownOpen] = useState(false);
   const [selectedMarketArea, setSelectedMarketArea] = useState('');
+  const [selectedZipcode, setSelectedZipcode] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
@@ -309,6 +310,7 @@ function UserDashboard() {
     if (selectedCity) filtered = filtered.filter(p => p.city === selectedCity);
     if (selectedCounties.length > 0) filtered = filtered.filter(p => selectedCounties.includes(p.county));
     if (selectedMarketArea) filtered = filtered.filter(p => p.marketArea === selectedMarketArea);
+    if (selectedZipcode) filtered = filtered.filter(p => p.zip === selectedZipcode);
     if (selectedDate) filtered = filtered.filter(p => p.insiderDate === selectedDate);
     
     if (minPrice) {
@@ -363,6 +365,7 @@ function UserDashboard() {
     setSelectedCity('');
     setSelectedCounties([]);
     setSelectedMarketArea('');
+    setSelectedZipcode('');
     setSelectedDate('');
     setMinPrice('');
     setMaxPrice('');
@@ -396,6 +399,7 @@ function UserDashboard() {
       setSelectedCity(f.city || '');
       setSelectedCounties(Array.isArray(f.counties) ? f.counties : f.county ? [f.county] : []);
       setSelectedMarketArea(f.market_area || '');
+      setSelectedZipcode(f.zipcode || '');
       setSelectedDate('');
       setMinPrice(f.min_price != null ? String(f.min_price) : '');
       setMaxPrice(f.max_price != null ? String(f.max_price) : '');

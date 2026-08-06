@@ -2059,6 +2059,7 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
     const countyIdx = colIdx('COUNTY');
     const cityIdx = colIdx('P CITY');
     const marketIdx = colIdx('MARKET AREA');
+    const zipIdx = colIdx('P ZIP');
 
     const collectValues = (idx: number, cap: number) => {
       if (idx === -1) return [] as string[];
@@ -2073,6 +2074,7 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
     const counties = collectValues(countyIdx, 100);
     const cities = collectValues(cityIdx, 300);
     const marketAreas = collectValues(marketIdx, 100);
+    const zipcodes = collectValues(zipIdx, 500);
 
     const today = new Date().toISOString().slice(0, 10);
     const systemPrompt = `You translate natural language real-estate database queries into structured JSON filters. Today's date is ${today}.
@@ -2081,13 +2083,14 @@ The database contains ${databaseType} properties with these filterable fields:
 - counties: an ARRAY of values from ${JSON.stringify(counties)}. IMPORTANT: the data may contain multiple variants of the same county (different spelling, casing, or abbreviations like "FULTON" vs "Fulton" vs "S FULTON"). Include EVERY variant that matches the user's intent.
 - city: one of ${JSON.stringify(cities)}
 - market_area: one of ${JSON.stringify(marketAreas)}
+- zipcode: one of ${JSON.stringify(zipcodes)} (property zip code)
 - sale_date_after / sale_date_before: ISO dates (YYYY-MM-DD), filter on the property's SALE DATE
 - insider_date_after / insider_date_before: ISO dates, filter on the INSIDER DATE (when the record was published)
 - min_price / max_price: numbers (sale price in dollars)
 - min_units / max_units: numbers (apartment unit counts)
 - search_text: free text matched against property name, address, owner
 
-Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field summarizing your interpretation. Match county/city/market_area values EXACTLY as they appear in the lists (case-sensitive). If the user mentions a location not in the lists, put it in search_text instead. "Sales" or "sold" refers to SALE DATE; general activity or "insiders" refers to INSIDER DATE.`;
+Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field summarizing your interpretation. Match county/city/market_area/zipcode values EXACTLY as they appear in the lists (case-sensitive). If the user mentions a location not in the lists, put it in search_text instead. "Sales" or "sold" refers to SALE DATE; general activity or "insiders" refers to INSIDER DATE.`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

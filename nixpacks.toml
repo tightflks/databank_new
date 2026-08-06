@@ -1,7 +1,16 @@
 [phases.setup]
-nixPkgs = ["...", "chromium"]
+nixPkgs = ["nodejs_18", "chromium", "python3", "gcc", "gnumake"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run start"
 
 [variables]
 PUPPETEER_SKIP_DOWNLOAD = "true"
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
-PUPPETEER_EXECUTABLE_PATH = "/root/.nix-profile/bin/chromium"
+PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"

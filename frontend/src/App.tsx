@@ -1,9 +1,18 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-import { Upload, FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Search, Eye, Database, Calendar, FileArchive, Users } from 'lucide-react';
-import SearchComps from './SearchComps';
+import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users } from 'lucide-react';
 import UserDashboard from './UserDashboard';
+import DatabaseStatus from './DatabaseStatus';
+
+const DATABASE_OPTIONS = [
+  { value: 'apartments', label: '🏢 Apartments' },
+  { value: 'franchise', label: '🏪 Franchise' },
+  { value: 'industrial', label: '🏭 Industrial' },
+  { value: 'land', label: '🌳 Land' },
+  { value: 'offices', label: '🏛️ Offices' },
+  { value: 'retail', label: '🛍️ Retail' },
+];
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
@@ -15,6 +24,7 @@ interface SavedUpload {
   file_size: number;
   sheet_count: number;
   row_count: number;
+  database_type: string;
 }
 
 interface SavedReport {
@@ -26,86 +36,65 @@ interface SavedReport {
   property_count: number;
   original_filename: string;
   source_upload_date: string;
+  database_type?: string;
+  is_latest?: number;
 }
 
+const databaseLabel = (value?: string) => {
+  const option = DATABASE_OPTIONS.find(o => o.value === value);
+  return option ? option.label : value || '';
+};
+
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'search' | 'history' | 'user'>('generate');
+  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases'>('user');
+  const [selectedDatabase, setSelectedDatabase] = useState('apartments');
   const [uploads, setUploads] = useState<SavedUpload[]>([]);
   const [reports, setReports] = useState<SavedReport[]>([]);
   const [loadingUploads, setLoadingUploads] = useState(false);
   const [loadingReports, setLoadingReports] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [availableDates, setAvailableDates] = useState<Array<{ date: string; count: number }>>([]);
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
-  const [step, setStep] = useState<'upload' | 'select' | 'convert'>('upload');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [step, setStep] = useState<'select' | 'convert'>('select');
+  const [attachedUpload, setAttachedUpload] = useState<SavedUpload | null>(null);
+  const [loadingAttached, setLoadingAttached] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState('');
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      // Validate file type
-      const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
-      if (!validTypes.includes(selectedFile.type) && !selectedFile.name.endsWith('.xlsx') && !selectedFile.name.endsWith('.xls')) {
-        setError('Please upload a valid Excel file (.xlsx or .xls)');
-        return;
-      }
-      setFile(selectedFile);
+  // Load the attached file + its insider dates for the selected database
+  useEffect(() => {
+    if (activeTab !== 'generate') return;
+
+    const loadAttachedUpload = async () => {
+      setLoadingAttached(true);
       setError(null);
-      setSuccess(false);
-      
-      // Automatically fetch available dates
-      await fetchDates(selectedFile);
-    }
-  };
-
-  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const droppedFile = e.dataTransfer.files?.[0];
-    if (droppedFile) {
-      const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
-      if (!validTypes.includes(droppedFile.type) && !droppedFile.name.endsWith('.xlsx') && !droppedFile.name.endsWith('.xls')) {
-        setError('Please upload a valid Excel file (.xlsx or .xls)');
-        return;
-      }
-      setFile(droppedFile);
-      setError(null);
-      setSuccess(false);
-      
-      // Automatically fetch available dates
-      await fetchDates(droppedFile);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
-
-  const fetchDates = async (uploadFile: File) => {
-    setLoading(true);
-    setError(null);
-
-    const formData = new FormData();
-    formData.append('file', uploadFile);
-
-    try {
-      const response = await axios.post(`${API_URL}/api/dates`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      setAvailableDates(response.data.dates);
+      setAttachedUpload(null);
+      setAvailableDates([]);
+      setSelectedDates([]);
       setStep('select');
-    } catch (err: any) {
-      console.error('Error fetching dates:', err);
-      setError(err.response?.data?.error || 'Failed to extract dates from file. Make sure there is an "Insider Date" column.');
-    } finally {
-      setLoading(false);
-    }
-  };
+      setSuccess(false);
+
+      try {
+        const uploadsResponse = await axios.get(`${API_URL}/api/uploads?database_type=${selectedDatabase}&limit=1`);
+        const latest = uploadsResponse.data.uploads?.[0];
+        if (!latest) {
+          return;
+        }
+        setAttachedUpload(latest);
+
+        const datesResponse = await axios.get(`${API_URL}/api/uploads/${latest.id}/dates`);
+        setAvailableDates(datesResponse.data.dates);
+      } catch (err: any) {
+        console.error('Error loading attached upload:', err);
+        setError(err.response?.data?.error || 'Failed to load the attached file for this database.');
+      } finally {
+        setLoadingAttached(false);
+      }
+    };
+
+    loadAttachedUpload();
+  }, [activeTab, selectedDatabase]);
 
   const handleDateToggle = (date: string) => {
     setSelectedDates(prev => 
@@ -124,27 +113,18 @@ function App() {
   };
 
   const handleConvert = async () => {
-    if (!file) return;
+    if (!attachedUpload) return;
 
     setLoading(true);
     setError(null);
     setSuccess(false);
 
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    // Add selected date if any
-    if (selectedDates.length > 0) {
-      formData.append('filterDate', selectedDates[0]);
-    }
-
     try {
-      const response = await axios.post(`${API_URL}/api/convert-html`, formData, {
-        responseType: 'blob',
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      const response = await axios.post(
+        `${API_URL}/api/uploads/${attachedUpload.id}/generate-pdf`,
+        { filterDate: selectedDates.length > 0 ? selectedDates[0] : undefined },
+        { responseType: 'blob' }
+      );
 
       // Create a download link for the PDF
       const blob = new Blob([response.data], { type: 'application/pdf' });
@@ -158,22 +138,19 @@ function App() {
       window.URL.revokeObjectURL(url);
 
       setSuccess(true);
-      setFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
     } catch (err) {
-      console.error('Error converting file:', err);
-      setError('Failed to convert file. Please try again.');
+      console.error('Error generating PDF:', err);
+      setError('Failed to generate PDF. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchUploads = async () => {
+  const fetchUploads = async (databaseType?: string) => {
     setLoadingUploads(true);
     try {
-      const response = await axios.get(`${API_URL}/api/uploads`);
+      const query = databaseType ? `?database_type=${databaseType}` : '';
+      const response = await axios.get(`${API_URL}/api/uploads${query}`);
       setUploads(response.data.uploads);
     } catch (err) {
       console.error('Error fetching uploads:', err);
@@ -184,15 +161,16 @@ function App() {
 
   useEffect(() => {
     if (activeTab === 'history') {
-      fetchUploads();
-      fetchReports();
+      fetchUploads(historyFilter || undefined);
+      fetchReports(historyFilter || undefined);
     }
-  }, [activeTab]);
+  }, [activeTab, historyFilter]);
 
-  const fetchReports = async () => {
+  const fetchReports = async (databaseType?: string) => {
     setLoadingReports(true);
     try {
-      const response = await axios.get(`${API_URL}/api/reports`);
+      const query = databaseType ? `?database_type=${databaseType}` : '';
+      const response = await axios.get(`${API_URL}/api/reports${query}`);
       setReports(response.data.reports);
     } catch (err) {
       console.error('Error fetching reports:', err);
@@ -219,41 +197,23 @@ function App() {
     });
   };
 
-  const handlePreview = async () => {
-    if (!file) return;
-
-    setLoading(true);
-    setError(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    // Add selected date if any
-    if (selectedDates.length > 0) {
-      formData.append('filterDate', selectedDates[0]);
-    }
-
+  const handleDeleteReport = async (reportId: number) => {
+    if (!window.confirm('Delete this report? Users will no longer see it in Available Reports.')) return;
     try {
-      const response = await axios.post(`${API_URL}/api/preview-html`, formData, {
-        responseType: 'text',
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      // Open HTML in new tab
-      const newWindow = window.open();
-      if (newWindow) {
-        newWindow.document.write(response.data);
-        newWindow.document.close();
-      } else {
-        setError('Please allow pop-ups to preview reports online');
-      }
+      await axios.delete(`${API_URL}/api/reports/${reportId}`);
+      setReports(prev => prev.filter(r => r.id !== reportId));
     } catch (err) {
-      console.error('Error generating preview:', err);
-      setError('Failed to generate preview. Please try again.');
-    } finally {
-      setLoading(false);
+      console.error('Error deleting report:', err);
+      alert('Failed to delete report. Please try again.');
+    }
+  };
+
+  const handlePreview = () => {
+    if (!attachedUpload) return;
+    const filterParam = selectedDates.length > 0 ? `?filterDate=${encodeURIComponent(selectedDates[0])}` : '';
+    const newWindow = window.open(`${API_URL}/api/uploads/${attachedUpload.id}/preview${filterParam}`, '_blank');
+    if (!newWindow) {
+      setError('Please allow pop-ups to preview reports online');
     }
   };
 
@@ -293,19 +253,8 @@ function App() {
                 : 'bg-white/50 text-gray-600 hover:bg-white/80'
             }`}
           >
-            <Upload className="w-5 h-5" />
+            <FileText className="w-5 h-5" />
             Generate
-          </button>
-          <button
-            onClick={() => setActiveTab('search')}
-            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'search'
-                ? 'bg-white text-blue-600 shadow-lg'
-                : 'bg-white/50 text-gray-600 hover:bg-white/80'
-            }`}
-          >
-            <Search className="w-5 h-5" />
-            Search
           </button>
           <button
             onClick={() => setActiveTab('history')}
@@ -318,6 +267,17 @@ function App() {
             <Database className="w-5 h-5" />
             History
           </button>
+          <button
+            onClick={() => setActiveTab('databases')}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'databases'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/80'
+            }`}
+          >
+            <FileArchive className="w-5 h-5" />
+            Databases
+          </button>
         </div>
 
         {/* Tab Content */}
@@ -326,59 +286,72 @@ function App() {
             <div className="text-center mb-8">
               <h2 className="text-2xl font-bold text-gray-800 mb-2">Generate PDF Reports</h2>
               <p className="text-gray-600">
-                {step === 'upload' && 'Upload your Excel file and select reports by Insider Date'}
-                {step === 'select' && 'Select the Insider Dates you want to include'}
+                {step === 'select' && 'Pick a database and select the Insider Dates you want to include'}
                 {step === 'convert' && 'Ready to generate your reports'}
               </p>
             </div>
 
-        {/* Upload Area */}
-        {step === 'upload' && (
-        <div
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${
-            file 
-              ? 'border-green-400 bg-green-50' 
-              : 'border-gray-300 bg-gray-50 hover:border-blue-400 hover:bg-blue-50'
-          }`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handleFileChange}
-            className="hidden"
-            id="file-upload"
-          />
-          
-          {!file ? (
-            <label htmlFor="file-upload" className="cursor-pointer">
-              <Upload className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-              <p className="text-lg font-medium text-gray-700 mb-2">
-                Drop your Excel file here or click to browse
-              </p>
-              <p className="text-sm text-gray-500">Supports .xlsx and .xls files</p>
+        {/* Database Selector */}
+        {step === 'select' && (
+          <div className="mb-6">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Database
             </label>
-          ) : (
-            <div className="flex items-center justify-center gap-3">
-              <FileSpreadsheet className="w-12 h-12 text-green-600" />
-              <div className="text-left">
-                <p className="font-medium text-gray-800">{file.name}</p>
-                <p className="text-sm text-gray-500">
-                  {(file.size / 1024).toFixed(2)} KB
-                </p>
-              </div>
-              {loading && (
-                <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-              )}
+            <div className="grid grid-cols-3 gap-2">
+              {DATABASE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setSelectedDatabase(option.value)}
+                  className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                    selectedDatabase === option.value
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Attached File Info */}
+        {attachedUpload && (
+          <div className="mb-6 flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-xl">
+            <FileSpreadsheet className="w-8 h-8 text-green-600 flex-shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-gray-800 truncate">{attachedUpload.original_filename}</p>
+              <p className="text-sm text-gray-500">
+                Attached file · {attachedUpload.row_count.toLocaleString()} rows · uploaded {formatDate(attachedUpload.upload_date)}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Loading attached file */}
+        {loadingAttached && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          </div>
+        )}
+
+        {/* No file attached */}
+        {!loadingAttached && !attachedUpload && (
+          <div className="text-center py-8">
+            <AlertCircle className="w-16 h-16 mx-auto text-yellow-500 mb-4" />
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">No File Attached</h3>
+            <p className="text-gray-600 mb-4">This database has no file attached yet. Attach one from the Databases tab.</p>
+            <button
+              onClick={() => setActiveTab('databases')}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Go to Databases
+            </button>
+          </div>
         )}
 
         {/* Date Selection */}
-        {step === 'select' && (
+        {!loadingAttached && attachedUpload && step === 'select' && (
           availableDates.length > 0 ? (
           <div className="space-y-4">
             <div className="flex items-center justify-between mb-4">
@@ -417,23 +390,9 @@ function App() {
 
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => {
-                  setStep('upload');
-                  setSelectedDates([]);
-                  setAvailableDates([]);
-                  setFile(null);
-                  if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                  }
-                }}
-                className="flex-1 py-3 rounded-xl font-semibold text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
-              >
-                Upload Different File
-              </button>
-              <button
                 onClick={() => setStep('convert')}
                 disabled={selectedDates.length === 0}
-                className={`flex-2 py-3 px-6 rounded-xl font-semibold text-white transition-colors ${
+                className={`flex-1 py-3 px-6 rounded-xl font-semibold text-white transition-colors ${
                   selectedDates.length === 0
                     ? 'bg-gray-300 cursor-not-allowed'
                     : 'bg-blue-600 hover:bg-blue-700'
@@ -447,25 +406,19 @@ function App() {
             <div className="text-center py-8">
               <AlertCircle className="w-16 h-16 mx-auto text-yellow-500 mb-4" />
               <h3 className="text-lg font-semibold text-gray-800 mb-2">No Insider Dates Found</h3>
-              <p className="text-gray-600 mb-4">The uploaded file doesn't contain any "Insider Date" column or the dates couldn't be extracted.</p>
+              <p className="text-gray-600 mb-4">The attached file doesn't contain any "Insider Date" column or the dates couldn't be extracted.</p>
               <button
-                onClick={() => {
-                  setStep('upload');
-                  setFile(null);
-                  if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                  }
-                }}
+                onClick={() => setActiveTab('databases')}
                 className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
-                Upload Different File
+                Upload a Different File
               </button>
             </div>
           )
         )}
 
         {/* Convert Confirmation */}
-        {step === 'convert' && (
+        {attachedUpload && step === 'convert' && (
           <div className="space-y-4">
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
               <p className="text-sm text-blue-800">
@@ -548,12 +501,41 @@ function App() {
               </div>
             )}
           </div>
-        ) : activeTab === 'search' ? (
-          <SearchComps />
         ) : activeTab === 'user' ? (
           <UserDashboard />
+        ) : activeTab === 'databases' ? (
+          <DatabaseStatus />
         ) : (
           <div className="space-y-6">
+            {/* Database Filter */}
+            <div className="flex justify-center">
+              <div className="inline-flex flex-wrap justify-center rounded-xl bg-white shadow-md p-1 gap-1">
+                <button
+                  onClick={() => setHistoryFilter('')}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                    historyFilter === ''
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  All Databases
+                </button>
+                {DATABASE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setHistoryFilter(option.value)}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                      historyFilter === option.value
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Saved Reports Section */}
             <div className="bg-white rounded-2xl shadow-xl p-8">
               <div className="text-center mb-8">
@@ -582,9 +564,21 @@ function App() {
                         <div className="flex items-start gap-4 flex-1">
                           <FileText className="w-10 h-10 text-blue-600 flex-shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <h3 className="text-lg font-semibold text-gray-800">
-                              {report.report_name}
-                            </h3>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-lg font-semibold text-gray-800">
+                                {report.report_name}
+                              </h3>
+                              {report.database_type && (
+                                <span className="bg-indigo-100 text-indigo-700 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                                  {databaseLabel(report.database_type)}
+                                </span>
+                              )}
+                              {report.is_latest === 0 && (
+                                <span className="bg-amber-100 text-amber-700 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                                  Previous version
+                                </span>
+                              )}
+                            </div>
                             <p className="text-sm text-gray-600 mt-1">
                               Source: {report.original_filename}
                             </p>
@@ -638,6 +632,12 @@ function App() {
                           >
                             Copy Link
                           </button>
+                          <button
+                            className="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium"
+                            onClick={() => handleDeleteReport(report.id)}
+                          >
+                            Delete
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -674,9 +674,16 @@ function App() {
                         <div className="flex items-start gap-4 flex-1">
                           <FileSpreadsheet className="w-10 h-10 text-green-600 flex-shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <h3 className="text-lg font-semibold text-gray-800 truncate">
-                              {upload.original_filename}
-                            </h3>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-lg font-semibold text-gray-800 truncate">
+                                {upload.original_filename}
+                              </h3>
+                              {upload.database_type && (
+                                <span className="bg-indigo-100 text-indigo-700 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                                  {databaseLabel(upload.database_type)}
+                                </span>
+                              )}
+                            </div>
                             <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-2 text-sm text-gray-600">
                               <div className="flex items-center gap-2">
                                 <Calendar className="w-4 h-4" />

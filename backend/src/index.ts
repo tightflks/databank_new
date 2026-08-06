@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import multer from 'multer';
 import cors from 'cors';
@@ -60,10 +61,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_report_date ON saved_reports(created_date DESC);
 `);
 
+// Migration: add database_type column to uploads if it doesn't exist
+try {
+  db.exec(`ALTER TABLE uploads ADD COLUMN database_type TEXT NOT NULL DEFAULT 'apartments'`);
+  console.log('✅ Added database_type column to uploads table');
+} catch (e) {
+  // Column already exists
+}
+
+const DATABASE_TYPES = ['apartments', 'franchise', 'industrial', 'land', 'offices', 'retail'];
+
 // Prepared statements for better performance
 const insertUploadStmt: any = db.prepare(`
-  INSERT INTO uploads (filename, original_filename, file_size, sheet_count, row_count)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT INTO uploads (filename, original_filename, file_size, sheet_count, row_count, database_type)
+  VALUES (?, ?, ?, ?, ?, ?)
 `);
 
 const insertExcelDataStmt: any = db.prepare(`
@@ -73,6 +84,10 @@ const insertExcelDataStmt: any = db.prepare(`
 
 const getUploadsStmt: any = db.prepare(`
   SELECT * FROM uploads ORDER BY upload_date DESC LIMIT ? OFFSET ?
+`);
+
+const getUploadsByTypeStmt: any = db.prepare(`
+  SELECT * FROM uploads WHERE database_type = ? ORDER BY upload_date DESC LIMIT ? OFFSET ?
 `);
 
 const getUploadByIdStmt: any = db.prepare(`
@@ -93,7 +108,11 @@ const insertReportStmt: any = db.prepare(`
 `);
 
 const getReportsStmt: any = db.prepare(`
-  SELECT sr.*, u.original_filename, u.upload_date as source_upload_date
+  SELECT sr.*, u.original_filename, u.upload_date as source_upload_date, u.database_type,
+    CASE WHEN sr.upload_id = (
+      SELECT id FROM uploads u2 WHERE u2.database_type = u.database_type
+      ORDER BY u2.upload_date DESC, u2.id DESC LIMIT 1
+    ) THEN 1 ELSE 0 END as is_latest
   FROM saved_reports sr
   JOIN uploads u ON sr.upload_id = u.id
   ORDER BY sr.created_date DESC
@@ -112,7 +131,12 @@ const deleteReportStmt: any = db.prepare(`
 `);
 
 // Database helper functions
-function saveUploadToDb(filename: string, originalFilename: string, fileSize: number, sheetCount: number, excelData: any[][]): number {
+function normalizeDatabaseType(value: any): string {
+  const type = String(value || '').trim().toLowerCase();
+  return DATABASE_TYPES.includes(type) ? type : 'apartments';
+}
+
+function saveUploadToDb(filename: string, originalFilename: string, fileSize: number, sheetCount: number, excelData: any[][], databaseType: string = 'apartments'): number {
   const transaction = db.transaction(() => {
     // Insert upload metadata
     const result = insertUploadStmt.run(
@@ -120,7 +144,8 @@ function saveUploadToDb(filename: string, originalFilename: string, fileSize: nu
       originalFilename,
       fileSize,
       sheetCount,
-      excelData.length
+      excelData.length,
+      normalizeDatabaseType(databaseType)
     );
     const uploadId = result.lastInsertRowid as number;
 
@@ -139,7 +164,10 @@ function saveUploadToDb(filename: string, originalFilename: string, fileSize: nu
   return transaction();
 }
 
-function getUploadsFromDb(limit: number = 50, offset: number = 0): any[] {
+function getUploadsFromDb(limit: number = 50, offset: number = 0, databaseType?: string): any[] {
+  if (databaseType) {
+    return getUploadsByTypeStmt.all(normalizeDatabaseType(databaseType), limit, offset);
+  }
   return getUploadsStmt.all(limit, offset);
 }
 
@@ -163,6 +191,20 @@ function getUploadCountFromDb(): number {
 }
 
 function saveReportToDb(uploadId: number, reportName: string, selectedDates: string[], propertyCount: number): number {
+  // Dedupe: one report per (upload, date selection) - refresh the existing one instead of inserting a duplicate
+  const existing = db.prepare(`
+    SELECT id FROM saved_reports WHERE upload_id = ? AND selected_dates = ?
+  `).get(uploadId, JSON.stringify(selectedDates)) as { id: number } | undefined;
+
+  if (existing) {
+    db.prepare(`
+      UPDATE saved_reports
+      SET report_name = ?, property_count = ?, created_date = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(reportName, propertyCount, existing.id);
+    return existing.id;
+  }
+
   const result = insertReportStmt.run(
     uploadId,
     reportName,
@@ -691,7 +733,8 @@ app.post('/api/dates', upload.single('file'), async (req: Request, res: Response
         req.file.originalname,
         req.file.size,
         workbook.SheetNames.length,
-        jsonData
+        jsonData,
+        req.body.database_type
       );
       console.log(`✅ Saved upload to database with ID: ${uploadId}`);
     } catch (dbError) {
@@ -798,7 +841,8 @@ app.post('/api/search', upload.single('file'), async (req: Request, res: Respons
         req.file.originalname,
         req.file.size,
         workbook.SheetNames.length,
-        jsonData
+        jsonData,
+        req.body.database_type
       );
       console.log(`✅ Saved upload to database with ID: ${uploadId}`);
     } catch (dbError) {
@@ -1026,7 +1070,8 @@ app.post('/api/convert-html', upload.single('file'), async (req: Request, res: R
           req.file.originalname,
           req.file.size,
           workbook.SheetNames.length,
-          jsonData
+          jsonData,
+          req.body.database_type
         );
       }
 
@@ -1616,8 +1661,9 @@ app.get('/api/uploads', (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
+    const databaseType = req.query.database_type as string | undefined;
     
-    const uploads = getUploadsFromDb(limit, offset);
+    const uploads = getUploadsFromDb(limit, offset, databaseType);
     const total = getUploadCountFromDb();
     
     res.json({
@@ -1700,11 +1746,506 @@ app.delete('/api/uploads/:id', (req: Request, res: Response) => {
 
 // ==================== SAVED REPORTS ENDPOINTS ====================
 
+// Get database status: which file/version is attached to each database
+app.get('/api/databases', (req: Request, res: Response) => {
+  try {
+    const latestUploadStmt = db.prepare(`
+      SELECT * FROM uploads WHERE database_type = ? ORDER BY upload_date DESC LIMIT 1
+    `);
+    const uploadCountStmt = db.prepare(`
+      SELECT COUNT(*) as count FROM uploads WHERE database_type = ?
+    `);
+    const reportCountStmt = db.prepare(`
+      SELECT COUNT(*) as count FROM saved_reports sr
+      JOIN uploads u ON sr.upload_id = u.id
+      WHERE u.database_type = ?
+    `);
+
+    const databases = DATABASE_TYPES.map((type) => {
+      const latestUpload = latestUploadStmt.get(type) as any;
+      const uploadCount = (uploadCountStmt.get(type) as any).count;
+      const reportCount = (reportCountStmt.get(type) as any).count;
+      return {
+        database_type: type,
+        latest_upload: latestUpload || null,
+        upload_count: uploadCount,
+        report_count: reportCount
+      };
+    });
+
+    res.json({ databases });
+  } catch (error) {
+    console.error('Error fetching database status:', error);
+    res.status(500).json({ error: 'Failed to fetch database status' });
+  }
+});
+
+// Upload a new file version directly to a specific database
+app.post('/api/databases/:type/upload', upload.single('file'), (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const databaseType = normalizeDatabaseType(req.params.type);
+    if (databaseType !== String(req.params.type).trim().toLowerCase()) {
+      return res.status(400).json({ error: 'Invalid database type' });
+    }
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+
+    if (jsonData.length === 0) {
+      return res.status(400).json({ error: 'Excel file is empty' });
+    }
+
+    const uploadId = saveUploadToDb(
+      req.file.originalname,
+      req.file.originalname,
+      req.file.size,
+      workbook.SheetNames.length,
+      jsonData,
+      databaseType
+    );
+    console.log(`✅ Attached upload ${uploadId} to database "${databaseType}"`);
+
+    res.json({
+      success: true,
+      upload: getUploadByIdFromDb(uploadId)
+    });
+  } catch (error) {
+    console.error('Error uploading to database:', error);
+    res.status(500).json({ error: 'Failed to upload file to database' });
+  }
+});
+
+// Extract insider dates from a stored upload
+app.get('/api/uploads/:id/dates', (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid upload ID' });
+    }
+
+    const uploadRecord = getUploadByIdFromDb(id);
+    if (!uploadRecord) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+
+    const excelData = getExcelDataFromDb(id);
+    if (excelData.length === 0) {
+      return res.status(400).json({ error: 'Upload has no data' });
+    }
+
+    const headers = excelData[0] as string[];
+    let dateColumnIndex = headers.findIndex(h =>
+      h && String(h).toLowerCase().trim() === 'insider date'
+    );
+    if (dateColumnIndex === -1) {
+      dateColumnIndex = headers.findIndex(h =>
+        h && String(h).toLowerCase().includes('insider') &&
+        String(h).toLowerCase().includes('date') &&
+        !String(h).toLowerCase().includes('previous')
+      );
+    }
+    if (dateColumnIndex === -1) {
+      return res.status(400).json({ error: 'No "Insider Date" column found in stored data' });
+    }
+
+    const dateMap = new Map<string, number>();
+    for (let i = 1; i < excelData.length; i++) {
+      const row = excelData[i];
+      if (Array.isArray(row) && row[dateColumnIndex] !== undefined && row[dateColumnIndex] !== null) {
+        let dateValue = row[dateColumnIndex];
+        if (typeof dateValue === 'number') {
+          const excelDate = XLSX.SSF.parse_date_code(dateValue);
+          if (excelDate) {
+            dateValue = `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
+          }
+        }
+        const dateStr = String(dateValue).trim();
+        if (dateStr) {
+          dateMap.set(dateStr, (dateMap.get(dateStr) || 0) + 1);
+        }
+      }
+    }
+
+    // Only include dates strictly before today, keep the 10 most recent
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const dateEntries = Array.from(dateMap.entries())
+      .map(([date, count]) => ({
+        date,
+        count,
+        sortKey: new Date(date)
+      }))
+      .filter(({ sortKey }) => !isNaN(sortKey.getTime()) && sortKey.getTime() < startOfToday.getTime());
+
+    dateEntries.sort((a, b) => b.sortKey.getTime() - a.sortKey.getTime());
+
+    res.json({
+      upload: uploadRecord,
+      dates: dateEntries.slice(0, 10).map(({ date, count }) => ({ date, count }))
+    });
+  } catch (error) {
+    console.error('Error extracting dates from stored upload:', error);
+    res.status(500).json({ error: 'Failed to extract dates from stored upload' });
+  }
+});
+
+// Shared: build report properties + HTML from stored Excel data
+function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string): { html: string; propertyCount: number } {
+  let filteredData = excelData;
+  if (filterDate) {
+    const headers = excelData[0] as string[];
+    const dateColumnIndex = headers.findIndex((h: string) => h && String(h).toLowerCase().trim() === 'insider date');
+    if (dateColumnIndex >= 0) {
+      const dataRows = excelData.slice(1).filter((row: any[]) => {
+        if (!Array.isArray(row)) return false;
+        let cellValue = row[dateColumnIndex];
+        if (cellValue === undefined || cellValue === null) return false;
+        if (typeof cellValue === 'number') {
+          const excelDate = XLSX.SSF.parse_date_code(cellValue);
+          if (excelDate) {
+            cellValue = `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
+          }
+        }
+        const cellStr = String(cellValue).trim();
+        return cellStr === filterDate || cellStr.includes(filterDate);
+      });
+      filteredData = [headers, ...dataRows];
+    }
+  }
+
+  const headers = filteredData[0] as string[];
+  const dataRows = filteredData.slice(1);
+
+  const REPORT_FIELD_MAPPING = {
+    propertyProfile: [
+      { excel: 'P NAME', label: 'Property Name' },
+      { excel: 'P STREET NUMBER', label: 'Address', concat: 'P STREET NAME' },
+      { excel: 'P CITY', label: 'City' },
+      { excel: 'COUNTY', label: 'County' },
+      { excel: 'MARKET AREA', label: 'Market Area' },
+      { excel: 'P ZIP', label: 'Zip' },
+      { excel: 'DISTRICT2', label: 'District' },
+      { excel: 'P CROSS STREET NAME', label: 'Cross Road' },
+      { excel: 'PARCEL', label: 'Parcel' },
+    ],
+    propertyDetails: [
+      { excel: 'INSIDER DATE', label: 'Insider Date' },
+      { excel: 'P TYPE', label: 'Insider Description' },
+      { excel: 'UNITS COMPLETED', label: 'Units / $ Unit', concat: '$ UNIT PROJECT', format: 'units' },
+      { excel: 'TAX OWNER', label: 'Tax Owner' },
+      { excel: 'ONSITE PHONE', label: 'Onsite Telephone' },
+      { excel: '# ACRES', label: 'Acres / $ Per Acre', concat: '$ ACRE', format: 'acres' },
+      { excel: 'HEATED SF', label: 'Square Ft' },
+      { excel: '$ LOAN', label: 'Loan Amount', format: 'currency' },
+      { excel: 'ATTORNEY', label: 'Attorney Name' },
+      { excel: 'ATTORNEY PHONE', label: 'Attorney Telephone' },
+    ],
+    financialHighlights: [
+      { excel: 'SALE PRICE', label: 'Property Sale Amount', format: 'currency' },
+      { excel: 'SALE DATE', label: 'Property Sale Date' },
+      { excel: 'LAND SALE PRICE', label: 'Land Sale Amount', format: 'currency' },
+      { excel: 'LAND SALE DATE', label: 'Land Sale Date' },
+      { excel: '$ EQUITY', label: 'Equity', format: 'currency' },
+      { excel: '$ DOWNPAYMENT', label: 'Down Payment', format: 'currency' },
+      { excel: '$ PURCHASE NOTE', label: 'Purchase Note', format: 'currency' },
+      { excel: 'UTILITIES', label: 'Utility' },
+      { excel: 'APPLICATION FEE', label: 'Application Fee', format: 'currency' },
+      { excel: 'REFUND', label: 'Refund Amount', format: 'currency' },
+      { excel: 'MONTHLY INCOME', label: 'Monthly Income', format: 'currency' },
+      { excel: 'YEARLY INCOME', label: 'Yearly Income', format: 'currency' },
+    ],
+    unitBreakout: [] as any[],
+    owner: [] as any[],
+    broker: [] as any[],
+    leasingCompany: [] as any[],
+    seller: [] as any[],
+    lender: [] as any[],
+    comments: { excel: 'M1', label: 'Comments' }
+  };
+
+  const getColIndex = (colName: string) => headers.findIndex(h => h && String(h).trim() === colName);
+
+  const getCellValue = (row: any[], colName: string) => {
+    const idx = getColIndex(colName);
+    if (idx === -1) return '';
+    const value = row[idx];
+    if (value === undefined || value === null) return '';
+    return String(value).trim();
+  };
+
+  const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
+    if (!value) return '';
+    if (concat && row) {
+      const concatValue = getCellValue(row, concat);
+      if (format === 'units') return `${value} / ${concatValue}`;
+      if (format === 'acres') return `${value} / ${concatValue}`;
+      return `${value} ${concatValue}`.trim();
+    }
+    if (format === 'currency' && value) {
+      const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
+      if (!isNaN(num)) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    return value;
+  };
+
+  const properties = dataRows.map(row => {
+    const propertyName = getCellValue(row, 'P NAME');
+    if (!propertyName) return null;
+
+    return {
+      propertyName,
+      profileFields: REPORT_FIELD_MAPPING.propertyProfile.map((field: any) => ({
+        label: field.label,
+        value: field.concat
+          ? `${getCellValue(row, field.excel)} ${getCellValue(row, field.concat)}`.trim()
+          : getCellValue(row, field.excel)
+      })),
+      detailsFields: REPORT_FIELD_MAPPING.propertyDetails.map((field: any) => ({
+        label: field.label,
+        value: formatValue(getCellValue(row, field.excel), field.format, row, field.concat)
+      })),
+      financialFields: REPORT_FIELD_MAPPING.financialHighlights.map((field: any) => ({
+        label: field.label,
+        value: formatValue(getCellValue(row, field.excel), field.format)
+      })),
+      unitBreakout: [] as any[],
+      owner: [] as any[],
+      broker: [] as any[],
+      leasingCompany: [] as any[],
+      seller: [] as any[],
+      lender: [] as any[],
+      comments: getCellValue(row, 'M1')
+    };
+  }).filter(Boolean);
+
+  return {
+    html: generatePropertyReportHTML(properties, REPORT_FIELD_MAPPING),
+    propertyCount: properties.length
+  };
+}
+
+// AI-powered natural language search: translate a user query into structured filters
+app.post('/api/nl-search', async (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'AI search is not configured. Set ANTHROPIC_API_KEY in backend/.env' });
+    }
+
+    const { query, database_type } = req.body || {};
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ error: 'Missing query' });
+    }
+
+    const databaseType = normalizeDatabaseType(database_type || 'apartments');
+    const latestUpload = db.prepare(`
+      SELECT id FROM uploads WHERE database_type = ? ORDER BY upload_date DESC, id DESC LIMIT 1
+    `).get(databaseType) as { id: number } | undefined;
+    if (!latestUpload) {
+      return res.status(404).json({ error: 'No file attached to this database' });
+    }
+
+    // Gather known filter values from the stored data
+    const excelData = getExcelDataFromDb(latestUpload.id);
+    const headers = (excelData[0] as string[]).map(h => String(h || '').trim());
+    const colIdx = (name: string) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+    const countyIdx = colIdx('COUNTY');
+    const cityIdx = colIdx('P CITY');
+    const marketIdx = colIdx('MARKET AREA');
+
+    const collectValues = (idx: number, cap: number) => {
+      if (idx === -1) return [] as string[];
+      const values = new Set<string>();
+      for (let i = 1; i < excelData.length && values.size < cap; i++) {
+        const v = String((excelData[i] as any[])[idx] ?? '').trim();
+        if (v) values.add(v);
+      }
+      return Array.from(values);
+    };
+
+    const counties = collectValues(countyIdx, 100);
+    const cities = collectValues(cityIdx, 300);
+    const marketAreas = collectValues(marketIdx, 100);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const systemPrompt = `You translate natural language real-estate database queries into structured JSON filters. Today's date is ${today}.
+
+The database contains ${databaseType} properties with these filterable fields:
+- counties: an ARRAY of values from ${JSON.stringify(counties)}. IMPORTANT: the data may contain multiple variants of the same county (different spelling, casing, or abbreviations like "FULTON" vs "Fulton" vs "S FULTON"). Include EVERY variant that matches the user's intent.
+- city: one of ${JSON.stringify(cities)}
+- market_area: one of ${JSON.stringify(marketAreas)}
+- sale_date_after / sale_date_before: ISO dates (YYYY-MM-DD), filter on the property's SALE DATE
+- insider_date_after / insider_date_before: ISO dates, filter on the INSIDER DATE (when the record was published)
+- min_price / max_price: numbers (sale price in dollars)
+- min_units / max_units: numbers (apartment unit counts)
+- search_text: free text matched against property name, address, owner
+
+Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field summarizing your interpretation. Match county/city/market_area values EXACTLY as they appear in the lists (case-sensitive). If the user mentions a location not in the lists, put it in search_text instead. "Sales" or "sold" refers to SALE DATE; general activity or "insiders" refers to INSIDER DATE.`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 500,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: query.trim() }]
+      })
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      console.error('Anthropic API error:', response.status, errBody);
+      return res.status(502).json({ error: 'AI service error. Please try again.' });
+    }
+
+    const result = await response.json() as any;
+    const text = result?.content?.[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(422).json({ error: 'Could not interpret the query. Try rephrasing.' });
+    }
+
+    let filters: any;
+    try {
+      filters = JSON.parse(jsonMatch[0]);
+    } catch {
+      return res.status(422).json({ error: 'Could not interpret the query. Try rephrasing.' });
+    }
+
+    res.json({ filters });
+  } catch (error) {
+    console.error('Error in NL search:', error);
+    res.status(500).json({ error: 'Failed to process natural language search' });
+  }
+});
+
+// Preview HTML report from a stored upload (no re-upload required)
+app.get('/api/uploads/:id/preview', (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid upload ID' });
+    }
+
+    const uploadRecord = getUploadByIdFromDb(id);
+    if (!uploadRecord) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+
+    const excelData = getExcelDataFromDb(id);
+    if (excelData.length === 0) {
+      return res.status(400).json({ error: 'Upload has no data' });
+    }
+
+    const filterDate = req.query.filterDate as string | undefined;
+    const { html } = buildReportHTMLFromExcelData(excelData, filterDate);
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (error) {
+    console.error('Error previewing stored upload:', error);
+    res.status(500).json({ error: 'Failed to generate preview' });
+  }
+});
+
+// Generate PDF from a stored upload (no re-upload required)
+app.post('/api/uploads/:id/generate-pdf', async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid upload ID' });
+    }
+
+    const uploadRecord = getUploadByIdFromDb(id);
+    if (!uploadRecord) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+
+    const excelData = getExcelDataFromDb(id);
+    if (excelData.length === 0) {
+      return res.status(400).json({ error: 'Upload has no data' });
+    }
+
+    const filterDate = (req.body?.filterDate || req.query.filterDate) as string | undefined;
+    const { html, propertyCount } = buildReportHTMLFromExcelData(excelData, filterDate);
+
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 }
+    });
+    await browser.close();
+
+    // Save report configuration
+    try {
+      const reportName = filterDate ? `Report - ${filterDate}` : 'Report - All Properties';
+      const selectedDates = filterDate ? [filterDate] : [];
+      const reportId = saveReportToDb(id, reportName, selectedDates, propertyCount);
+      console.log(`✅ Saved report configuration with ID: ${reportId}`);
+    } catch (dbError) {
+      console.error('⚠️ Failed to save report configuration:', dbError);
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename=databank-property-reports.pdf');
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('Error generating PDF from stored upload:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
 // Get all saved reports
 app.get('/api/reports', (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
+    const databaseType = req.query.database_type as string | undefined;
+
+    if (databaseType) {
+      const reports = db.prepare(`
+        SELECT sr.*, u.original_filename, u.upload_date as source_upload_date, u.database_type,
+          CASE WHEN sr.upload_id = (
+            SELECT id FROM uploads u2 WHERE u2.database_type = u.database_type
+            ORDER BY u2.upload_date DESC, u2.id DESC LIMIT 1
+          ) THEN 1 ELSE 0 END as is_latest
+        FROM saved_reports sr
+        JOIN uploads u ON sr.upload_id = u.id
+        WHERE u.database_type = ?
+        ORDER BY sr.created_date DESC
+        LIMIT ? OFFSET ?
+      `).all(normalizeDatabaseType(databaseType), limit, offset) as any[];
+
+      const reportsWithParsedDates = reports.map((report: any) => ({
+        ...report,
+        selected_dates: JSON.parse(report.selected_dates)
+      }));
+
+      return res.json({
+        reports: reportsWithParsedDates,
+        total: reportsWithParsedDates.length,
+        limit,
+        offset
+      });
+    }
     
     const reports = getReportsFromDb(limit, offset);
     const total = getReportCountFromDb();

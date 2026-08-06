@@ -2056,12 +2056,8 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
     const excelData = getExcelDataFromDb(latestUpload.id);
     const headers = (excelData[0] as string[]).map(h => String(h || '').trim());
     const colIdx = (name: string) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
-    const countyIdx = colIdx('COUNTY');
-    const cityIdx = colIdx('P CITY');
-    const marketIdx = colIdx('MARKET AREA');
-    const zipIdx = colIdx('P ZIP');
-
-    const collectValues = (idx: number, cap: number) => {
+    const collectValues = (colName: string, cap: number) => {
+      const idx = colIdx(colName);
       if (idx === -1) return [] as string[];
       const values = new Set<string>();
       for (let i = 1; i < excelData.length && values.size < cap; i++) {
@@ -2071,26 +2067,46 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
       return Array.from(values);
     };
 
-    const counties = collectValues(countyIdx, 100);
-    const cities = collectValues(cityIdx, 300);
-    const marketAreas = collectValues(marketIdx, 100);
-    const zipcodes = collectValues(zipIdx, 500);
+    const counties = collectValues('COUNTY', 100);
+    const cities = collectValues('P CITY', 300);
+    const marketAreas = collectValues('MARKET AREA', 100);
+    const zipcodes = collectValues('P ZIP', 500);
+    const districts = collectValues('DISTRICT2', 100);
+    const landLots = collectValues('LAND LOT', 200);
+    const sellers = collectValues('SELLER', 300);
 
     const today = new Date().toISOString().slice(0, 10);
     const systemPrompt = `You translate natural language real-estate database queries into structured JSON filters. Today's date is ${today}.
 
 The database contains ${databaseType} properties with these filterable fields:
-- counties: an ARRAY of values from ${JSON.stringify(counties)}. IMPORTANT: the data may contain multiple variants of the same county (different spelling, casing, or abbreviations like "FULTON" vs "Fulton" vs "S FULTON"). Include EVERY variant that matches the user's intent.
+
+LOCATION FILTERS (match values EXACTLY as listed, case-sensitive):
+- counties: an ARRAY of values from ${JSON.stringify(counties)}. Include ALL variants that match the user's intent.
 - city: one of ${JSON.stringify(cities)}
 - market_area: one of ${JSON.stringify(marketAreas)}
-- zipcode: one of ${JSON.stringify(zipcodes)} (property zip code)
-- sale_date_after / sale_date_before: ISO dates (YYYY-MM-DD), filter on the property's SALE DATE
-- insider_date_after / insider_date_before: ISO dates, filter on the INSIDER DATE (when the record was published)
-- min_price / max_price: numbers (sale price in dollars)
-- min_units / max_units: numbers (apartment unit counts)
-- search_text: free text matched against property name, address, owner
+- zipcode: one of ${JSON.stringify(zipcodes)}
+- district: one of ${JSON.stringify(districts)}
+- land_lot: one of ${JSON.stringify(landLots)}
 
-Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field summarizing your interpretation. Match county/city/market_area/zipcode values EXACTLY as they appear in the lists (case-sensitive). If the user mentions a location not in the lists, put it in search_text instead. "Sales" or "sold" refers to SALE DATE; general activity or "insiders" refers to INSIDER DATE.`;
+DATE RANGE FILTERS (use ISO format YYYY-MM-DD):
+- insider_date_after / insider_date_before: INSIDER DATE (when record was published)
+- sale_date_after / sale_date_before: property SALE DATE
+- land_sale_date_after / land_sale_date_before: LAND SALE DATE
+
+NUMERIC RANGE FILTERS:
+- min_sale_price / max_sale_price: property sale price in dollars
+- min_land_price / max_land_price: land sale price in dollars
+- min_units / max_units: number of units
+- min_acres / max_acres: number of acres
+- min_year_built / max_year_built: year built (YYYY)
+
+TEXT SEARCH (searches across ALL fields in the database):
+- search_text: free text matched against property name, description, address, owner, seller, and all other text fields
+
+ENTITY FILTERS:
+- seller: one of ${JSON.stringify(sellers.slice(0, 50))} (showing first 50)
+
+Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field. If a location isn't in the lists, use search_text instead.`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

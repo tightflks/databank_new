@@ -67,11 +67,22 @@ function UserDashboard() {
   const [countyDropdownOpen, setCountyDropdownOpen] = useState(false);
   const [selectedMarketArea, setSelectedMarketArea] = useState('');
   const [selectedZipcode, setSelectedZipcode] = useState('');
+  const [selectedDistrict, setSelectedDistrict] = useState('');
+  const [selectedLandLot, setSelectedLandLot] = useState('');
+  const [selectedSeller, setSelectedSeller] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
+  const [minLandPrice, setMinLandPrice] = useState('');
+  const [maxLandPrice, setMaxLandPrice] = useState('');
   const [minUnits, setMinUnits] = useState('');
   const [maxUnits, setMaxUnits] = useState('');
+  const [minAcres, setMinAcres] = useState('');
+  const [maxAcres, setMaxAcres] = useState('');
+  const [minYearBuilt, setMinYearBuilt] = useState('');
+  const [maxYearBuilt, setMaxYearBuilt] = useState('');
+  const [landSaleDateAfter, setLandSaleDateAfter] = useState('');
+  const [landSaleDateBefore, setLandSaleDateBefore] = useState('');
   const [showCountyBreakdown, setShowCountyBreakdown] = useState(false);
   const [showZipBreakdown, setShowZipBreakdown] = useState(false);
   const [showInsiderDates, setShowInsiderDates] = useState(true);
@@ -252,6 +263,9 @@ function UserDashboard() {
         
         return {
           propertyName: String(getCell('P NAME')).trim(),
+          description: String(getCell('P TYPE')).trim(),
+          streetNumber: String(getCell('P STREET NUMBER')).trim(),
+          streetName: String(getCell('P STREET NAME')).trim(),
           city: String(getCell('P CITY')).trim(),
           county: String(getCell('COUNTY')).trim(),
           marketArea: String(getCell('MARKET AREA')).trim(),
@@ -259,12 +273,18 @@ function UserDashboard() {
           lastInsiderDate: formatExcelDate(lastInsiderRaw),
           salePrice: String(getCell('SALE PRICE')).trim(),
           saleDate: formatExcelDate(getCell('SALE DATE')),
+          landSalePrice: String(getCell('LAND SALE PRICE')).trim(),
+          landSaleDate: formatExcelDate(getCell('LAND SALE DATE')),
           units: String(getCell('UNITS COMPLETED')).trim(),
+          acres: String(getCell('# ACRES')).trim(),
+          yearBuilt: String(getCell('YEAR BUILT')).trim(),
           address: String(getCell('P STREET NUMBER')).trim() + ' ' + String(getCell('P STREET NAME')).trim(),
           zip: String(getCell('P ZIP')).trim(),
           district: String(getCell('DISTRICT2')).trim(),
+          landLot: String(getCell('LAND LOT')).trim(),
           parcel: String(getCell('PARCEL')).trim(),
           taxOwner: String(getCell('TAX OWNER')).trim(),
+          seller: String(getCell('SELLER')).trim(),
           loanAmount: String(getCell('$ LOAN')).trim(),
           raw: row
         };
@@ -292,48 +312,56 @@ function UserDashboard() {
   const applyPropertyFilters = () => {
     let filtered = [...properties];
     
+    // Text search across ALL fields in the property
     if (propertySearchText.trim()) {
       const tokens = propertySearchText.toLowerCase().split(/\s+/).filter(Boolean);
       filtered = filtered.filter(p => {
-        const haystack = [
-          p.propertyName,
-          p.city,
-          p.address,
-          p.county,
-          p.marketArea,
-          p.taxOwner,
-        ].filter(Boolean).join(' ').toLowerCase();
-        return tokens.every(token => haystack.includes(token));
+        // Search across all string values in the property object
+        const allValues = Object.values(p)
+          .filter(v => typeof v === 'string')
+          .join(' ')
+          .toLowerCase();
+        return tokens.every(token => allValues.includes(token));
       });
     }
     
+    // Location filters
     if (selectedCity) filtered = filtered.filter(p => p.city === selectedCity);
     if (selectedCounties.length > 0) filtered = filtered.filter(p => selectedCounties.includes(p.county));
     if (selectedMarketArea) filtered = filtered.filter(p => p.marketArea === selectedMarketArea);
     if (selectedZipcode) filtered = filtered.filter(p => p.zip === selectedZipcode);
+    if (selectedDistrict) filtered = filtered.filter(p => p.district === selectedDistrict);
+    if (selectedLandLot) filtered = filtered.filter(p => p.landLot === selectedLandLot);
     if (selectedDate) filtered = filtered.filter(p => p.insiderDate === selectedDate);
     
-    if (minPrice) {
-      filtered = filtered.filter(p => {
-        const price = parseFloat(p.salePrice?.replace(/[^0-9.-]/g, '') || '0');
-        return price >= parseFloat(minPrice);
-      });
-    }
+    // Entity filters
+    if (selectedSeller) filtered = filtered.filter(p => p.seller === selectedSeller);
     
-    if (maxPrice) {
-      filtered = filtered.filter(p => {
-        const price = parseFloat(p.salePrice?.replace(/[^0-9.-]/g, '') || '0');
-        return price <= parseFloat(maxPrice);
-      });
-    }
+    // Numeric range helpers
+    const parseNum = (val: string | undefined) => parseFloat(String(val || '').replace(/[^0-9.-]/g, '') || '0');
+    const parseInt_ = (val: string | undefined) => parseInt(String(val || '').replace(/[^0-9]/g, '') || '0');
     
-    if (minUnits) {
-      filtered = filtered.filter(p => {
-        const units = parseInt(p.units?.replace(/[^0-9]/g, '') || '0');
-        return units >= parseInt(minUnits);
-      });
-    }
+    // Sale price range
+    if (minPrice) filtered = filtered.filter(p => parseNum(p.salePrice) >= parseFloat(minPrice));
+    if (maxPrice) filtered = filtered.filter(p => parseNum(p.salePrice) <= parseFloat(maxPrice));
     
+    // Land price range
+    if (minLandPrice) filtered = filtered.filter(p => parseNum(p.landSalePrice) >= parseFloat(minLandPrice));
+    if (maxLandPrice) filtered = filtered.filter(p => parseNum(p.landSalePrice) <= parseFloat(maxLandPrice));
+    
+    // Units range
+    if (minUnits) filtered = filtered.filter(p => parseInt_(p.units) >= parseInt(minUnits));
+    if (maxUnits) filtered = filtered.filter(p => parseInt_(p.units) <= parseInt(maxUnits));
+    
+    // Acres range
+    if (minAcres) filtered = filtered.filter(p => parseNum(p.acres) >= parseFloat(minAcres));
+    if (maxAcres) filtered = filtered.filter(p => parseNum(p.acres) <= parseFloat(maxAcres));
+    
+    // Year built range
+    if (minYearBuilt) filtered = filtered.filter(p => parseInt_(p.yearBuilt) >= parseInt(minYearBuilt));
+    if (maxYearBuilt) filtered = filtered.filter(p => parseInt_(p.yearBuilt) <= parseInt(maxYearBuilt));
+    
+    // Date range helper
     const inDateRange = (dateStr: string, after: string, before: string) => {
       const t = new Date(dateStr).getTime();
       if (isNaN(t)) return false;
@@ -342,19 +370,15 @@ function UserDashboard() {
       return true;
     };
 
+    // Date filters
     if (saleDateAfter || saleDateBefore) {
       filtered = filtered.filter(p => p.saleDate && inDateRange(p.saleDate, saleDateAfter, saleDateBefore));
     }
-
     if (insiderDateAfter || insiderDateBefore) {
       filtered = filtered.filter(p => p.insiderDate && inDateRange(p.insiderDate, insiderDateAfter, insiderDateBefore));
     }
-
-    if (maxUnits) {
-      filtered = filtered.filter(p => {
-        const units = parseInt(p.units?.replace(/[^0-9]/g, '') || '0');
-        return units <= parseInt(maxUnits);
-      });
+    if (landSaleDateAfter || landSaleDateBefore) {
+      filtered = filtered.filter(p => p.landSaleDate && inDateRange(p.landSaleDate, landSaleDateAfter, landSaleDateBefore));
     }
     
     setFilteredProperties(filtered);
@@ -366,15 +390,26 @@ function UserDashboard() {
     setSelectedCounties([]);
     setSelectedMarketArea('');
     setSelectedZipcode('');
+    setSelectedDistrict('');
+    setSelectedLandLot('');
+    setSelectedSeller('');
     setSelectedDate('');
     setMinPrice('');
     setMaxPrice('');
+    setMinLandPrice('');
+    setMaxLandPrice('');
     setMinUnits('');
     setMaxUnits('');
+    setMinAcres('');
+    setMaxAcres('');
+    setMinYearBuilt('');
+    setMaxYearBuilt('');
     setSaleDateAfter('');
     setSaleDateBefore('');
     setInsiderDateAfter('');
     setInsiderDateBefore('');
+    setLandSaleDateAfter('');
+    setLandSaleDateBefore('');
     setAiExplanation(null);
     setAiError(null);
   };
@@ -400,15 +435,32 @@ function UserDashboard() {
       setSelectedCounties(Array.isArray(f.counties) ? f.counties : f.county ? [f.county] : []);
       setSelectedMarketArea(f.market_area || '');
       setSelectedZipcode(f.zipcode || '');
+      setSelectedDistrict(f.district || '');
+      setSelectedLandLot(f.land_lot || '');
+      setSelectedSeller(f.seller || '');
       setSelectedDate('');
-      setMinPrice(f.min_price != null ? String(f.min_price) : '');
-      setMaxPrice(f.max_price != null ? String(f.max_price) : '');
+      // Sale price
+      setMinPrice(f.min_sale_price != null ? String(f.min_sale_price) : '');
+      setMaxPrice(f.max_sale_price != null ? String(f.max_sale_price) : '');
+      // Land price
+      setMinLandPrice(f.min_land_price != null ? String(f.min_land_price) : '');
+      setMaxLandPrice(f.max_land_price != null ? String(f.max_land_price) : '');
+      // Units
       setMinUnits(f.min_units != null ? String(f.min_units) : '');
       setMaxUnits(f.max_units != null ? String(f.max_units) : '');
+      // Acres
+      setMinAcres(f.min_acres != null ? String(f.min_acres) : '');
+      setMaxAcres(f.max_acres != null ? String(f.max_acres) : '');
+      // Year built
+      setMinYearBuilt(f.min_year_built != null ? String(f.min_year_built) : '');
+      setMaxYearBuilt(f.max_year_built != null ? String(f.max_year_built) : '');
+      // Dates
       setSaleDateAfter(f.sale_date_after || '');
       setSaleDateBefore(f.sale_date_before || '');
       setInsiderDateAfter(f.insider_date_after || '');
       setInsiderDateBefore(f.insider_date_before || '');
+      setLandSaleDateAfter(f.land_sale_date_after || '');
+      setLandSaleDateBefore(f.land_sale_date_before || '');
       setAiExplanation(f.explanation || 'Filters applied.');
       setActiveView('search');
     } catch (err: any) {

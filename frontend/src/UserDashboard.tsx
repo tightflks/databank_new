@@ -333,8 +333,14 @@ function UserDashboard() {
       const targetZip = String(selectedZipcode).trim().slice(0, 5);
       filtered = filtered.filter(p => String(p.zip || '').trim().slice(0, 5) === targetZip);
     }
-    if (selectedDistrict) filtered = filtered.filter(p => p.district === selectedDistrict);
-    if (selectedLandLot) filtered = filtered.filter(p => p.landLot === selectedLandLot);
+    if (selectedDistrict) {
+      const target = String(selectedDistrict).trim();
+      filtered = filtered.filter(p => String(p.district || '').trim() === target);
+    }
+    if (selectedLandLot) {
+      const target = String(selectedLandLot).trim();
+      filtered = filtered.filter(p => String(p.landLot || '').trim() === target);
+    }
     if (selectedDate) filtered = filtered.filter(p => p.insiderDate === selectedDate);
     
     // Entity filters
@@ -434,13 +440,13 @@ function UserDashboard() {
 
       // Reset previous filters, then apply the AI-derived ones
       setPropertySearchText(f.search_text || '');
-      setSelectedCity(f.city || '');
-      setSelectedCounties(Array.isArray(f.counties) ? f.counties : f.county ? [f.county] : []);
-      setSelectedMarketArea(f.market_area || '');
+      setSelectedCity(f.city != null ? String(f.city) : '');
+      setSelectedCounties(Array.isArray(f.counties) ? f.counties.map(String) : f.county ? [String(f.county)] : []);
+      setSelectedMarketArea(f.market_area != null ? String(f.market_area) : '');
       setSelectedZipcode(f.zipcode != null ? String(f.zipcode) : '');
-      setSelectedDistrict(f.district || '');
-      setSelectedLandLot(f.land_lot || '');
-      setSelectedSeller(f.seller || '');
+      setSelectedDistrict(f.district != null ? String(f.district) : '');
+      setSelectedLandLot(f.land_lot != null ? String(f.land_lot) : '');
+      setSelectedSeller(f.seller != null ? String(f.seller) : '');
       setSelectedDate('');
       // Sale price
       setMinPrice(f.min_sale_price != null ? String(f.min_sale_price) : '');
@@ -485,9 +491,16 @@ function UserDashboard() {
 
   const formatCurrency = (value: string) => {
     if (!value) return '';
-    const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-    if (isNaN(num)) return value;
-    return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+    if (isNaN(num) || num === 0) return '';
+    return `$${num.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  };
+
+  const formatUnits = (value: string) => {
+    if (!value) return '';
+    const num = parseInt(String(value).replace(/[^0-9]/g, ''));
+    if (isNaN(num) || num === 0) return '';
+    return num.toLocaleString('en-US');
   };
 
   const getFullComments = (property: Property) => {
@@ -1312,8 +1325,8 @@ function UserDashboard() {
                         <td className="px-4 py-3 text-sm font-medium text-gray-900">{property.propertyName}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.city}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.county}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{property.units}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{property.salePrice}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{formatUnits(property.units)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{formatCurrency(property.salePrice)}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.insiderDate}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.lastInsiderDate}</td>
                         <td className="px-4 py-3 text-sm" onClick={(e) => { e.stopPropagation(); setExpandedRow(expandedRow === idx ? null : idx); }}>
@@ -1334,7 +1347,7 @@ function UserDashboard() {
                               <div><span className="font-semibold">District:</span> {property.district}</div>
                               <div><span className="font-semibold">Parcel:</span> {property.parcel}</div>
                               <div><span className="font-semibold">Tax Owner:</span> {property.taxOwner}</div>
-                              <div><span className="font-semibold">Loan Amount:</span> {property.loanAmount}</div>
+                              <div><span className="font-semibold">Loan Amount:</span> {formatCurrency(property.loanAmount) || '—'}</div>
                             </div>
                           </td>
                         </tr>

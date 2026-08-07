@@ -329,7 +329,10 @@ function UserDashboard() {
     if (selectedCity) filtered = filtered.filter(p => p.city === selectedCity);
     if (selectedCounties.length > 0) filtered = filtered.filter(p => selectedCounties.includes(p.county));
     if (selectedMarketArea) filtered = filtered.filter(p => p.marketArea === selectedMarketArea);
-    if (selectedZipcode) filtered = filtered.filter(p => p.zip === selectedZipcode);
+    if (selectedZipcode) {
+      const targetZip = String(selectedZipcode).trim().slice(0, 5);
+      filtered = filtered.filter(p => String(p.zip || '').trim().slice(0, 5) === targetZip);
+    }
     if (selectedDistrict) filtered = filtered.filter(p => p.district === selectedDistrict);
     if (selectedLandLot) filtered = filtered.filter(p => p.landLot === selectedLandLot);
     if (selectedDate) filtered = filtered.filter(p => p.insiderDate === selectedDate);
@@ -434,7 +437,7 @@ function UserDashboard() {
       setSelectedCity(f.city || '');
       setSelectedCounties(Array.isArray(f.counties) ? f.counties : f.county ? [f.county] : []);
       setSelectedMarketArea(f.market_area || '');
-      setSelectedZipcode(f.zipcode || '');
+      setSelectedZipcode(f.zipcode != null ? String(f.zipcode) : '');
       setSelectedDistrict(f.district || '');
       setSelectedLandLot(f.land_lot || '');
       setSelectedSeller(f.seller || '');

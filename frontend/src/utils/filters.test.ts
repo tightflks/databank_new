@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { computePricePerUnit } from './pricePerUnit';
 
 interface Property {
   propertyName: string;
@@ -218,10 +219,92 @@ describe('Text Search', () => {
 });
 
 describe('Entity Filters', () => {
-  it('should filter by seller', () => {
-    const filtered = mockProperties.filter(p => p.seller === 'XYZ Holdings Inc');
+  const nameMatch = (value: string | undefined, needle: string) =>
+    String(value || '').toLowerCase().includes(needle.trim().toLowerCase());
+
+  it('should filter by seller with partial, case-insensitive match', () => {
+    const filtered = mockProperties.filter(p => nameMatch(p.seller, 'xyz'));
     expect(filtered.length).toBe(1);
     expect(filtered[0].propertyName).toBe('Oak Ridge Complex');
+  });
+
+  it('should filter by owner (buyer) with partial match', () => {
+    const withOwners = mockProperties.map((p, i) => ({
+      ...p,
+      owner: i === 0 ? 'NOVARE GROUP HOLDINGS' : 'OTHER OWNER',
+      taxOwner: '',
+      ownerAttention: '',
+    }));
+    const matchesOwner = (p: Record<string, string>, needle: string) =>
+      nameMatch(p.owner, needle) || nameMatch(p.taxOwner, needle) || nameMatch(p.ownerAttention, needle);
+    const filtered = withOwners.filter(p => matchesOwner(p, 'novare'));
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].propertyName).toBe('Sunset Apartments');
+  });
+
+  it('should match an entity as either owner or seller (owner history)', () => {
+    const withOwners = mockProperties.map((p, i) => ({
+      ...p,
+      owner: i === 0 ? 'NOVARE GROUP' : '',
+      taxOwner: '',
+      ownerAttention: '',
+      seller: i === 1 ? 'NOVARE DEVELOPMENT LLC' : p.seller,
+    }));
+    const filtered = withOwners.filter(p =>
+      nameMatch(p.owner, 'novare') || nameMatch(p.taxOwner, 'novare') ||
+      nameMatch(p.ownerAttention, 'novare') || nameMatch(p.seller, 'novare')
+    );
+    expect(filtered.length).toBe(2);
+  });
+});
+
+describe('Street Filter', () => {
+  it('should match street name within address, case-insensitive', () => {
+    const withAddresses = mockProperties.map((p, i) => ({
+      ...p,
+      streetName: i === 0 ? 'PEACHTREE ST NE' : 'MAIN ST',
+      address: i === 0 ? '100 PEACHTREE ST NE' : '200 MAIN ST',
+    }));
+    const target = 'peachtree';
+    const filtered = withAddresses.filter(p =>
+      String(p.streetName || '').toLowerCase().includes(target) ||
+      String(p.address || '').toLowerCase().includes(target)
+    );
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].propertyName).toBe('Sunset Apartments');
+  });
+});
+
+describe('Price Per Unit', () => {
+  it('should calculate sale price / units', () => {
+    expect(computePricePerUnit('$1,500,000', '50')).toBe(30000);
+    expect(computePricePerUnit('2200000', '75')).toBe(29333);
+  });
+
+  it('should fall back to the $ UNIT PROJECT column when calculation is impossible', () => {
+    expect(computePricePerUnit('', '50', '$45,000')).toBe(45000);
+    expect(computePricePerUnit('$1,000,000', '', '32000')).toBe(32000);
+  });
+
+  it('should return 0 when nothing is available', () => {
+    expect(computePricePerUnit('', '', '')).toBe(0);
+    expect(computePricePerUnit('$0', '0')).toBe(0);
+  });
+
+  it('should filter properties by price-per-unit range', () => {
+    const withPpu = mockProperties.map(p => ({
+      ...p,
+      pricePerUnit: String(computePricePerUnit(p.salePrice, p.units) || ''),
+    }));
+    // Sunset: 30000, Oak Ridge: 29333, Downtown: 32000
+    const min = 29500;
+    const max = 31000;
+    const filtered = withPpu.filter(p => {
+      const ppu = parseNum(p.pricePerUnit);
+      return ppu >= min && ppu > 0 && ppu <= max;
+    });
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].propertyName).toBe('Sunset Apartments');
   });
 });
 

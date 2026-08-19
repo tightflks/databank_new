@@ -2073,7 +2073,6 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
     const zipcodes = collectValues('P ZIP', 500);
     const districts = collectValues('DISTRICT2', 100);
     const landLots = collectValues('LAND LOT', 200);
-    const sellers = collectValues('SELLER', 300);
 
     const today = new Date().toISOString().slice(0, 10);
     const systemPrompt = `You translate natural language real-estate database queries into structured JSON filters. Today's date is ${today}.
@@ -2093,9 +2092,13 @@ DATE RANGE FILTERS (use ISO format YYYY-MM-DD):
 - sale_date_after / sale_date_before: property SALE DATE
 - land_sale_date_after / land_sale_date_before: LAND SALE DATE
 
+ADDRESS FILTERS (partial, case-insensitive match):
+- street: street name, e.g. "Peachtree" matches "PEACHTREE ST NE"
+
 NUMERIC RANGE FILTERS:
 - min_sale_price / max_sale_price: property sale price in dollars
 - min_land_price / max_land_price: land sale price in dollars
+- min_price_per_unit / max_price_per_unit: price per unit in dollars (calculated as sale price / number of units)
 - min_units / max_units: number of units
 - min_acres / max_acres: number of acres
 - min_year_built / max_year_built: year built (YYYY)
@@ -2103,10 +2106,15 @@ NUMERIC RANGE FILTERS:
 TEXT SEARCH (searches across ALL fields in the database):
 - search_text: free text matched against property name, description, address, owner, seller, and all other text fields
 
-ENTITY FILTERS:
-- seller: one of ${JSON.stringify(sellers.slice(0, 50))} (showing first 50)
+OWNER / SELLER FILTERS (partial name, case-insensitive match). The OWNER of a property is the BUYER in its most recent sale; the SELLER is who sold it:
+- owner: use when the user asks who OWNS or BOUGHT properties (matches owner and tax-owner names)
+- seller: use when the user asks who SOLD properties
+- entity: use when the role is ambiguous or the user wants ALL activity/history for a company or person (matches owner OR seller). E.g. "history of Novare", "all properties associated with Novare" -> entity: "Novare"
 
-Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field. If a location isn't in the lists, use search_text instead.`;
+SPECIAL FLAGS:
+- show_top_owners: set to true when the user asks WHO owns a lot of / the most properties in an area. Combine with the appropriate location filter or search_text for the area, and DO NOT set owner/entity in that case.
+
+Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field. If a location or neighborhood (e.g. "Midtown", "Buckhead") isn't in the lists, use search_text instead.`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

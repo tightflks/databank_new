@@ -76,7 +76,6 @@ function UserDashboard() {
   const [streetFilter, setStreetFilter] = useState('');
   const [minPricePerUnit, setMinPricePerUnit] = useState('');
   const [maxPricePerUnit, setMaxPricePerUnit] = useState('');
-  const [showTopOwners, setShowTopOwners] = useState(false);
   const [selectedDate, setSelectedDate] = useState('');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
@@ -175,14 +174,20 @@ function UserDashboard() {
     };
   }, [properties]);
 
-  // Top owners across the currently filtered results (answers "who owns a lot of properties in X")
+  // Top owners over sales in the most recent 3 years (within the current search filters)
   const topOwners = useMemo(() => {
     const parseNum = (value: string) => {
       const n = parseFloat(String(value ?? '').replace(/[^0-9.-]/g, ''));
       return isNaN(n) ? 0 : n;
     };
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - 3);
+    const recent = filteredProperties.filter(p => {
+      const t = new Date(p.saleDate).getTime();
+      return !isNaN(t) && t >= cutoff.getTime();
+    });
     const ownerMap = new Map<string, { count: number; volume: number; units: number }>();
-    filteredProperties.forEach(p => {
+    recent.forEach(p => {
       const owner = (p.owner || p.taxOwner || '').trim();
       if (!owner) return;
       const entry = ownerMap.get(owner) || { count: 0, volume: 0, units: 0 };
@@ -510,7 +515,6 @@ function UserDashboard() {
       setOwnerFilter(one(f.owner));
       setEntityFilter(one(f.entity));
       setStreetFilter(one(f.street));
-      setShowTopOwners(Boolean(f.show_top_owners));
       setSelectedDate('');
       // Sale price
       setMinPrice(f.min_sale_price != null ? String(f.min_sale_price) : '');
@@ -538,7 +542,8 @@ function UserDashboard() {
       setLandSaleDateAfter(f.land_sale_date_after || '');
       setLandSaleDateBefore(f.land_sale_date_before || '');
       setAiExplanation(f.explanation || 'Filters applied.');
-      setActiveView('search');
+      // "Who owns..." questions land on the dashboard's Top Owners panel
+      setActiveView(f.show_top_owners ? 'dashboard' : 'search');
     } catch (err: any) {
       console.error('AI search error:', err);
       setAiError(err.response?.data?.error || 'AI search failed. Please try again.');
@@ -910,6 +915,46 @@ function UserDashboard() {
         {/* Data insight panels (dashboard view) */}
         {activeView === 'dashboard' && (
         <div>
+        {/* Top Owners (last 3 years) */}
+        {properties.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Building2 className="w-6 h-6 text-indigo-600" />
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Top Owners</h3>
+                <p className="text-sm text-gray-500">
+                  Based on sales in the most recent 3 years
+                  {filteredProperties.length !== properties.length && ' (within current search filters)'}
+                </p>
+              </div>
+            </div>
+            {topOwners.length === 0 ? (
+              <p className="text-sm text-gray-500">No sales with owner information in the last 3 years.</p>
+            ) : (
+              <div className="space-y-2">
+                {topOwners.map(({ owner, count, volume, units }) => (
+                  <div
+                    key={owner}
+                    className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                    onClick={() => {
+                      setActiveView('search');
+                      setEntityFilter(owner);
+                    }}
+                    title="Click to view all properties associated with this owner"
+                  >
+                    <span className="font-medium text-gray-700 truncate mr-4">{owner}</span>
+                    <span className="text-sm text-gray-500 flex-shrink-0">
+                      <span className="font-semibold text-indigo-600">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
+                      {units > 0 && <span className="ml-2 text-gray-600">{units.toLocaleString()} units</span>}
+                      {volume > 0 && <span className="ml-2 text-green-600 font-semibold">{formatCompactCurrency(volume)}</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* County and Zip Code Breakdown */}
         {properties.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -1408,54 +1453,14 @@ function UserDashboard() {
               <p className="text-sm text-gray-600">
                 Showing <span className="font-semibold">{filteredProperties.length.toLocaleString()}</span> of <span className="font-semibold">{properties.length.toLocaleString()}</span> properties
               </p>
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setShowTopOwners(!showTopOwners)}
-                  className={`text-sm font-medium flex items-center gap-1 ${showTopOwners ? 'text-indigo-700' : 'text-indigo-600 hover:text-indigo-700'}`}
-                >
-                  <TrendingUp className="w-4 h-4" />
-                  {showTopOwners ? 'Hide Top Owners' : 'Top Owners'}
-                </button>
-                <button
-                  onClick={clearPropertyFilters}
-                  className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
-                >
-                  <X className="w-4 h-4" />
-                  Clear Filters
-                </button>
-              </div>
+              <button
+                onClick={clearPropertyFilters}
+                className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+              >
+                <X className="w-4 h-4" />
+                Clear Filters
+              </button>
             </div>
-
-            {/* Top Owners in current results */}
-            {showTopOwners && (
-              <div className="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-xl">
-                <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
-                  <Building2 className="w-4 h-4 text-indigo-500" />
-                  Top Owners in Current Results
-                </h4>
-                {topOwners.length === 0 ? (
-                  <p className="text-sm text-gray-500">No owner information in the current results.</p>
-                ) : (
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {topOwners.map(({ owner, count, volume, units }) => (
-                      <div
-                        key={owner}
-                        className="flex items-center justify-between py-2 px-3 bg-white rounded-lg hover:bg-indigo-100 transition-colors cursor-pointer"
-                        onClick={() => setEntityFilter(owner)}
-                        title="Click to view all properties associated with this owner"
-                      >
-                        <span className="font-medium text-gray-700 truncate mr-4">{owner}</span>
-                        <span className="text-sm text-gray-500 flex-shrink-0">
-                          <span className="font-semibold text-indigo-600">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
-                          {units > 0 && <span className="ml-2 text-gray-600">{units.toLocaleString()} units</span>}
-                          {volume > 0 && <span className="ml-2 text-green-600 font-semibold">{formatCompactCurrency(volume)}</span>}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Property List */}
             <div className="max-h-[600px] overflow-y-auto">

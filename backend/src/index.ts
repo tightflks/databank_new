@@ -120,7 +120,7 @@ const getReportsStmt: any = db.prepare(`
 `);
 
 const getReportByIdStmt: any = db.prepare(`
-  SELECT sr.*, u.original_filename, u.upload_date as source_upload_date
+  SELECT sr.*, u.original_filename, u.upload_date as source_upload_date, u.database_type
   FROM saved_reports sr
   JOIN uploads u ON sr.upload_id = u.id
   WHERE sr.id = ?
@@ -1896,45 +1896,59 @@ app.get('/api/uploads/:id/dates', (req: Request, res: Response) => {
   }
 });
 
-// Shared: build report properties + HTML from stored Excel data
-function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string): { html: string; propertyCount: number } {
-  let filteredData = excelData;
-  if (filterDate) {
-    const headers = excelData[0] as string[];
-    const dateColumnIndex = headers.findIndex((h: string) => h && String(h).toLowerCase().trim() === 'insider date');
-    if (dateColumnIndex >= 0) {
-      const dataRows = excelData.slice(1).filter((row: any[]) => {
-        if (!Array.isArray(row)) return false;
-        let cellValue = row[dateColumnIndex];
-        if (cellValue === undefined || cellValue === null) return false;
-        if (typeof cellValue === 'number') {
-          const excelDate = XLSX.SSF.parse_date_code(cellValue);
-          if (excelDate) {
-            cellValue = `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
-          }
-        }
-        const cellStr = String(cellValue).trim();
-        return cellStr === filterDate || cellStr.includes(filterDate);
-      });
-      filteredData = [headers, ...dataRows];
-    }
+// Report field mappings per database type. Industrial files name several
+// columns differently from apartments (sq ft instead of units, PERMANENT LOAN
+// instead of $ LOAN, etc.), so each type gets its own mapping.
+function getReportFieldMapping(databaseType: string = 'apartments') {
+  const propertyProfile = [
+    { excel: 'P NAME', label: 'Property Name' },
+    { excel: 'P STREET NUMBER', label: 'Address', concat: 'P STREET NAME' },
+    { excel: 'P CITY', label: 'City' },
+    { excel: 'COUNTY', label: 'County' },
+    { excel: 'MARKET AREA', label: 'Market Area' },
+    { excel: 'P ZIP', label: 'Zip' },
+    { excel: 'DISTRICT2', label: 'District' },
+    { excel: 'P CROSS STREET NAME', label: 'Cross Road' },
+    { excel: 'PARCEL', label: 'Parcel' },
+  ];
+
+  if (databaseType === 'industrial') {
+    return {
+      propertyProfile,
+      propertyDetails: [
+        { excel: 'INSIDER DATE', label: 'Insider Date' },
+        { excel: 'PROJECT TYPE', label: 'Insider Description' },
+        { excel: '# SQ FT BUILT', label: 'Sq Ft / $ SF', concat: 'PRICE PER SF BUILDING', format: 'units' },
+        { excel: 'TAX OWNER', label: 'Tax Owner' },
+        { excel: '# ACRES', label: 'Acres / $ Per Acre', concat: 'PRICE PER ACRE', format: 'acres' },
+        { excel: 'PERMANENT LOAN', label: 'Loan Amount', format: 'currency' },
+        { excel: 'ATTORNEY', label: 'Attorney Name' },
+        { excel: 'ATTORNEY PHONE', label: 'Attorney Telephone' },
+      ],
+      financialHighlights: [
+        { excel: 'SALE PRICE', label: 'Property Sale Amount', format: 'currency' },
+        { excel: 'SALE DATE', label: 'Property Sale Date' },
+        { excel: 'LAND SALE PRICE', label: 'Land Sale Amount', format: 'currency' },
+        { excel: 'LAND SALE DATE', label: 'Land Sale Date' },
+        { excel: 'EQUITY', label: 'Equity', format: 'currency' },
+        { excel: 'DOWNPAYMENT', label: 'Down Payment', format: 'currency' },
+        { excel: 'PURCHASE NOTE', label: 'Purchase Note', format: 'currency' },
+        { excel: 'ASKING PRICE', label: 'Asking Price', format: 'currency' },
+        { excel: 'MONTHLY INCOME', label: 'Monthly Income', format: 'currency' },
+        { excel: 'YEARLY INCOME', label: 'Yearly Income', format: 'currency' },
+      ],
+      unitBreakout: [] as any[],
+      owner: [] as any[],
+      broker: [] as any[],
+      leasingCompany: [] as any[],
+      seller: [] as any[],
+      lender: [] as any[],
+      comments: { excel: 'M1', label: 'Comments' }
+    };
   }
 
-  const headers = filteredData[0] as string[];
-  const dataRows = filteredData.slice(1);
-
-  const REPORT_FIELD_MAPPING = {
-    propertyProfile: [
-      { excel: 'P NAME', label: 'Property Name' },
-      { excel: 'P STREET NUMBER', label: 'Address', concat: 'P STREET NAME' },
-      { excel: 'P CITY', label: 'City' },
-      { excel: 'COUNTY', label: 'County' },
-      { excel: 'MARKET AREA', label: 'Market Area' },
-      { excel: 'P ZIP', label: 'Zip' },
-      { excel: 'DISTRICT2', label: 'District' },
-      { excel: 'P CROSS STREET NAME', label: 'Cross Road' },
-      { excel: 'PARCEL', label: 'Parcel' },
-    ],
+  return {
+    propertyProfile,
     propertyDetails: [
       { excel: 'INSIDER DATE', label: 'Insider Date' },
       { excel: 'P TYPE', label: 'Insider Description' },
@@ -1969,6 +1983,36 @@ function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string): 
     lender: [] as any[],
     comments: { excel: 'M1', label: 'Comments' }
   };
+}
+
+// Shared: build report properties + HTML from stored Excel data
+function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string, databaseType: string = 'apartments'): { html: string; propertyCount: number } {
+  let filteredData = excelData;
+  if (filterDate) {
+    const headers = excelData[0] as string[];
+    const dateColumnIndex = headers.findIndex((h: string) => h && String(h).toLowerCase().trim() === 'insider date');
+    if (dateColumnIndex >= 0) {
+      const dataRows = excelData.slice(1).filter((row: any[]) => {
+        if (!Array.isArray(row)) return false;
+        let cellValue = row[dateColumnIndex];
+        if (cellValue === undefined || cellValue === null) return false;
+        if (typeof cellValue === 'number') {
+          const excelDate = XLSX.SSF.parse_date_code(cellValue);
+          if (excelDate) {
+            cellValue = `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
+          }
+        }
+        const cellStr = String(cellValue).trim();
+        return cellStr === filterDate || cellStr.includes(filterDate);
+      });
+      filteredData = [headers, ...dataRows];
+    }
+  }
+
+  const headers = filteredData[0] as string[];
+  const dataRows = filteredData.slice(1);
+
+  const REPORT_FIELD_MAPPING = getReportFieldMapping(databaseType);
 
   const getColIndex = (colName: string) => headers.findIndex(h => h && String(h).trim() === colName);
 
@@ -1977,15 +2021,29 @@ function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string): 
     if (idx === -1) return '';
     const value = row[idx];
     if (value === undefined || value === null) return '';
+    // Convert Excel date serial numbers to MM/DD/YYYY for date columns
+    if (typeof value === 'number' && colName.toUpperCase().includes('DATE')) {
+      const excelDate = XLSX.SSF.parse_date_code(value);
+      if (excelDate) {
+        return `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
+      }
+    }
     return String(value).trim();
+  };
+
+  const formatCurrencyValue = (value: string) => {
+    const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
+    if (isNaN(num)) return value;
+    return `$${num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
   };
 
   const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
     if (!value) return '';
     if (concat && row) {
       const concatValue = getCellValue(row, concat);
-      if (format === 'units') return `${value} / ${concatValue}`;
-      if (format === 'acres') return `${value} / ${concatValue}`;
+      if (format === 'units' || format === 'acres') {
+        return concatValue ? `${value} / ${formatCurrencyValue(concatValue)}` : value;
+      }
       return `${value} ${concatValue}`.trim();
     }
     if (format === 'currency' && value) {
@@ -2056,8 +2114,13 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
     const excelData = getExcelDataFromDb(latestUpload.id);
     const headers = (excelData[0] as string[]).map(h => String(h || '').trim());
     const colIdx = (name: string) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
-    const collectValues = (colName: string, cap: number) => {
-      const idx = colIdx(colName);
+    const collectValues = (colName: string | string[], cap: number) => {
+      const names = Array.isArray(colName) ? colName : [colName];
+      let idx = -1;
+      for (const name of names) {
+        idx = colIdx(name);
+        if (idx !== -1) break;
+      }
       if (idx === -1) return [] as string[];
       const values = new Set<string>();
       for (let i = 1; i < excelData.length && values.size < cap; i++) {
@@ -2072,7 +2135,7 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
     const marketAreas = collectValues('MARKET AREA', 100);
     const zipcodes = collectValues('P ZIP', 500);
     const districts = collectValues('DISTRICT2', 100);
-    const landLots = collectValues('LAND LOT', 200);
+    const landLots = collectValues(['LAND LOT', 'LANDLOT'], 200);
 
     const today = new Date().toISOString().slice(0, 10);
     const systemPrompt = `You translate natural language real-estate database queries into structured JSON filters. Today's date is ${today}.
@@ -2098,8 +2161,8 @@ ADDRESS FILTERS (partial, case-insensitive match):
 NUMERIC RANGE FILTERS:
 - min_sale_price / max_sale_price: property sale price in dollars
 - min_land_price / max_land_price: land sale price in dollars
-- min_price_per_unit / max_price_per_unit: price per unit in dollars (calculated as sale price / number of units)
-- min_units / max_units: number of units
+- min_price_per_unit / max_price_per_unit: price per ${databaseType === 'industrial' ? 'square foot of building' : 'unit'} in dollars (calculated as sale price / ${databaseType === 'industrial' ? 'building square feet' : 'number of units'})
+- min_units / max_units: ${databaseType === 'industrial' ? 'building size in square feet' : 'number of units'}
 - min_acres / max_acres: number of acres
 - min_year_built / max_year_built: year built (YYYY)
 
@@ -2177,7 +2240,7 @@ app.get('/api/uploads/:id/preview', (req: Request, res: Response) => {
     }
 
     const filterDate = req.query.filterDate as string | undefined;
-    const { html } = buildReportHTMLFromExcelData(excelData, filterDate);
+    const { html } = buildReportHTMLFromExcelData(excelData, filterDate, uploadRecord.database_type);
 
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
@@ -2206,7 +2269,7 @@ app.post('/api/uploads/:id/generate-pdf', async (req: Request, res: Response) =>
     }
 
     const filterDate = (req.body?.filterDate || req.query.filterDate) as string | undefined;
-    const { html, propertyCount } = buildReportHTMLFromExcelData(excelData, filterDate);
+    const { html, propertyCount } = buildReportHTMLFromExcelData(excelData, filterDate, uploadRecord.database_type);
 
     const browser = await puppeteer.launch({
       headless: true,
@@ -2353,186 +2416,9 @@ app.get('/api/reports/:id/view', async (req: Request, res: Response) => {
     const selectedDates = JSON.parse(report.selected_dates);
     const filterDate = selectedDates.length > 0 ? selectedDates[0] : undefined;
     
-    // Filter data by insider date if specified
-    let filteredData = excelData;
-    if (filterDate) {
-      const headers = excelData[0] as string[];
-      const dateColumnIndex = headers.findIndex((h: string) => h && h.toLowerCase().trim() === 'insider date');
-      
-      if (dateColumnIndex >= 0) {
-        const dataRows = excelData.slice(1).filter((row: any[]) => {
-          if (!Array.isArray(row)) return false;
-          let cellValue = row[dateColumnIndex];
-          if (cellValue === undefined || cellValue === null) return false;
-          
-          // Convert Excel serial date to formatted string if needed
-          if (typeof cellValue === 'number') {
-            const excelDate = XLSX.SSF.parse_date_code(cellValue);
-            if (excelDate) {
-              cellValue = `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
-            }
-          }
-          
-          const cellStr = String(cellValue).trim();
-          return cellStr === filterDate || cellStr.includes(filterDate);
-        });
-        
-        filteredData = [headers, ...dataRows];
-      }
-    }
+    // Build the HTML with the shared, database-type-aware report builder
+    const { html } = buildReportHTMLFromExcelData(excelData, filterDate, report.database_type);
 
-    const headers = filteredData[0] as string[];
-    const dataRows = filteredData.slice(1);
-
-    // Use the same field mapping from the convert endpoint
-    const FIELD_MAPPING = {
-      propertyProfile: [
-        { excel: 'P NAME', label: 'Property Name' },
-        { excel: 'P STREET NUMBER', label: 'Address', concat: 'P STREET NAME' },
-        { excel: 'P CITY', label: 'City' },
-        { excel: 'COUNTY', label: 'County' },
-        { excel: 'MARKET AREA', label: 'Market Area' },
-        { excel: 'P ZIP', label: 'Zip' },
-        { excel: 'DISTRICT2', label: 'District' },
-        { excel: 'P CROSS STREET NAME', label: 'Cross Road' },
-        { excel: 'PARCEL', label: 'Parcel' },
-      ],
-      propertyDetails: [
-        { excel: 'INSIDER DATE', label: 'Insider Date' },
-        { excel: 'P TYPE', label: 'Insider Description' },
-        { excel: 'UNITS COMPLETED', label: 'Units / $ Unit', concat: '$ UNIT PROJECT', format: 'units' },
-        { excel: 'TAX OWNER', label: 'Tax Owner' },
-        { excel: 'ONSITE PHONE', label: 'Onsite Telephone' },
-        { excel: '# ACRES', label: 'Acres / $ Per Acre', concat: '$ ACRE', format: 'acres' },
-        { excel: 'HEATED SF', label: 'Square Ft' },
-        { excel: '$ LOAN', label: 'Loan Amount', format: 'currency' },
-        { excel: 'ATTORNEY', label: 'Attorney Name' },
-        { excel: 'ATTORNEY PHONE', label: 'Attorney Telephone' },
-      ],
-      financialHighlights: [
-        { excel: 'SALE PRICE', label: 'Property Sale Amount', format: 'currency' },
-        { excel: 'SALE DATE', label: 'Property Sale Date' },
-        { excel: 'LAND SALE PRICE', label: 'Land Sale Amount', format: 'currency' },
-        { excel: 'LAND SALE DATE', label: 'Land Sale Date' },
-        { excel: '$ EQUITY', label: 'Equity', format: 'currency' },
-        { excel: '$ DOWNPAYMENT', label: 'Down Payment', format: 'currency' },
-        { excel: '$ PURCHASE NOTE', label: 'Purchase Note', format: 'currency' },
-        { excel: 'UTILITIES', label: 'Utility' },
-        { excel: 'APPLICATION FEE', label: 'Application Fee', format: 'currency' },
-        { excel: 'REFUND', label: 'Refund Amount', format: 'currency' },
-        { excel: 'MONTHLY INCOME', label: 'Monthly Income', format: 'currency' },
-        { excel: 'YEARLY INCOME', label: 'Yearly Income', format: 'currency' },
-      ],
-      unitBreakout: [] as any[],
-      owner: [] as any[],
-      broker: [] as any[],
-      leasingCompany: [] as any[],
-      seller: [] as any[],
-      lender: [] as any[],
-      comments: { excel: 'M1', label: 'Comments' }
-    };
-
-    const getColIndex = (colName: string) => headers.findIndex(h => h && h.trim() === colName);
-    
-    const getCellValue = (row: any[], colName: string) => {
-      const idx = getColIndex(colName);
-      if (idx === -1) return '';
-      const value = row[idx];
-      if (value === undefined || value === null) return '';
-      return String(value).trim();
-    };
-
-    const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
-      if (!value) return '';
-      
-      if (concat && row) {
-        const concatValue = getCellValue(row, concat);
-        if (format === 'units') return `${value} / ${concatValue}`;
-        if (format === 'acres') return `${value} / ${concatValue}`;
-        return `${value} ${concatValue}`.trim();
-      }
-      
-      if (format === 'currency' && value) {
-        const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-        if (!isNaN(num)) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      }
-      
-      return value;
-    };
-
-    const properties = dataRows.map(row => {
-      const propertyName = getCellValue(row, 'P NAME');
-      if (!propertyName) return null;
-
-      const profileFields = FIELD_MAPPING.propertyProfile.map((field: any) => ({
-        label: field.label,
-        value: field.concat 
-          ? `${getCellValue(row, field.excel)} ${getCellValue(row, field.concat)}`.trim()
-          : getCellValue(row, field.excel)
-      }));
-
-      const detailsFields = FIELD_MAPPING.propertyDetails.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format, row, field.concat)
-      }));
-
-      const financialFields = FIELD_MAPPING.financialHighlights.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const unitBreakout = FIELD_MAPPING.unitBreakout.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const owner = FIELD_MAPPING.owner.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const broker = FIELD_MAPPING.broker.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const leasingCompany = FIELD_MAPPING.leasingCompany.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const seller = FIELD_MAPPING.seller.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const lender = FIELD_MAPPING.lender.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const commentsValue = typeof FIELD_MAPPING.comments === 'object' && 'excel' in FIELD_MAPPING.comments
-        ? getCellValue(row, FIELD_MAPPING.comments.excel)
-        : '';
-
-      return {
-        propertyName,
-        profileFields,
-        detailsFields,
-        financialFields,
-        unitBreakout,
-        owner,
-        broker,
-        leasingCompany,
-        seller,
-        lender,
-        comments: commentsValue
-      };
-    }).filter(Boolean);
-
-    // Generate HTML (same template as preview endpoint)
-    const html = generatePropertyReportHTML(properties, FIELD_MAPPING);
-    
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
 
@@ -2560,185 +2446,8 @@ app.post('/api/reports/:id/regenerate-pdf', async (req: Request, res: Response) 
     const selectedDates = JSON.parse(report.selected_dates);
     const filterDate = selectedDates.length > 0 ? selectedDates[0] : undefined;
     
-    // Filter data by insider date if specified (same logic as view endpoint)
-    let filteredData = excelData;
-    if (filterDate) {
-      const headers = excelData[0] as string[];
-      const dateColumnIndex = headers.findIndex((h: string) => h && h.toLowerCase().trim() === 'insider date');
-      
-      if (dateColumnIndex >= 0) {
-        const dataRows = excelData.slice(1).filter((row: any[]) => {
-          if (!Array.isArray(row)) return false;
-          let cellValue = row[dateColumnIndex];
-          if (cellValue === undefined || cellValue === null) return false;
-          
-          // Convert Excel serial date to formatted string if needed
-          if (typeof cellValue === 'number') {
-            const excelDate = XLSX.SSF.parse_date_code(cellValue);
-            if (excelDate) {
-              cellValue = `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
-            }
-          }
-          
-          const cellStr = String(cellValue).trim();
-          return cellStr === filterDate || cellStr.includes(filterDate);
-        });
-        
-        filteredData = [headers, ...dataRows];
-      }
-    }
-
-    const headers = filteredData[0] as string[];
-    const dataRows = filteredData.slice(1);
-
-    // Use the same field mapping
-    const FIELD_MAPPING = {
-      propertyProfile: [
-        { excel: 'P NAME', label: 'Property Name' },
-        { excel: 'P STREET NUMBER', label: 'Address', concat: 'P STREET NAME' },
-        { excel: 'P CITY', label: 'City' },
-        { excel: 'COUNTY', label: 'County' },
-        { excel: 'MARKET AREA', label: 'Market Area' },
-        { excel: 'P ZIP', label: 'Zip' },
-        { excel: 'DISTRICT2', label: 'District' },
-        { excel: 'P CROSS STREET NAME', label: 'Cross Road' },
-        { excel: 'PARCEL', label: 'Parcel' },
-      ],
-      propertyDetails: [
-        { excel: 'INSIDER DATE', label: 'Insider Date' },
-        { excel: 'P TYPE', label: 'Insider Description' },
-        { excel: 'UNITS COMPLETED', label: 'Units / $ Unit', concat: '$ UNIT PROJECT', format: 'units' },
-        { excel: 'TAX OWNER', label: 'Tax Owner' },
-        { excel: 'ONSITE PHONE', label: 'Onsite Telephone' },
-        { excel: '# ACRES', label: 'Acres / $ Per Acre', concat: '$ ACRE', format: 'acres' },
-        { excel: 'HEATED SF', label: 'Square Ft' },
-        { excel: '$ LOAN', label: 'Loan Amount', format: 'currency' },
-        { excel: 'ATTORNEY', label: 'Attorney Name' },
-        { excel: 'ATTORNEY PHONE', label: 'Attorney Telephone' },
-      ],
-      financialHighlights: [
-        { excel: 'SALE PRICE', label: 'Property Sale Amount', format: 'currency' },
-        { excel: 'SALE DATE', label: 'Property Sale Date' },
-        { excel: 'LAND SALE PRICE', label: 'Land Sale Amount', format: 'currency' },
-        { excel: 'LAND SALE DATE', label: 'Land Sale Date' },
-        { excel: '$ EQUITY', label: 'Equity', format: 'currency' },
-        { excel: '$ DOWNPAYMENT', label: 'Down Payment', format: 'currency' },
-        { excel: '$ PURCHASE NOTE', label: 'Purchase Note', format: 'currency' },
-        { excel: 'UTILITIES', label: 'Utility' },
-        { excel: 'APPLICATION FEE', label: 'Application Fee', format: 'currency' },
-        { excel: 'REFUND', label: 'Refund Amount', format: 'currency' },
-        { excel: 'MONTHLY INCOME', label: 'Monthly Income', format: 'currency' },
-        { excel: 'YEARLY INCOME', label: 'Yearly Income', format: 'currency' },
-      ],
-      unitBreakout: [] as any[],
-      owner: [] as any[],
-      broker: [] as any[],
-      leasingCompany: [] as any[],
-      seller: [] as any[],
-      lender: [] as any[],
-      comments: { excel: 'M1', label: 'Comments' }
-    };
-
-    const getColIndex = (colName: string) => headers.findIndex(h => h && h.trim() === colName);
-    
-    const getCellValue = (row: any[], colName: string) => {
-      const idx = getColIndex(colName);
-      if (idx === -1) return '';
-      const value = row[idx];
-      if (value === undefined || value === null) return '';
-      return String(value).trim();
-    };
-
-    const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
-      if (!value) return '';
-      
-      if (concat && row) {
-        const concatValue = getCellValue(row, concat);
-        if (format === 'units') return `${value} / ${concatValue}`;
-        if (format === 'acres') return `${value} / ${concatValue}`;
-        return `${value} ${concatValue}`.trim();
-      }
-      
-      if (format === 'currency' && value) {
-        const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-        if (!isNaN(num)) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      }
-      
-      return value;
-    };
-
-    const properties = dataRows.map(row => {
-      const propertyName = getCellValue(row, 'P NAME');
-      if (!propertyName) return null;
-
-      const profileFields = FIELD_MAPPING.propertyProfile.map((field: any) => ({
-        label: field.label,
-        value: field.concat 
-          ? `${getCellValue(row, field.excel)} ${getCellValue(row, field.concat)}`.trim()
-          : getCellValue(row, field.excel)
-      }));
-
-      const detailsFields = FIELD_MAPPING.propertyDetails.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format, row, field.concat)
-      }));
-
-      const financialFields = FIELD_MAPPING.financialHighlights.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const unitBreakout = FIELD_MAPPING.unitBreakout.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const owner = FIELD_MAPPING.owner.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const broker = FIELD_MAPPING.broker.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const leasingCompany = FIELD_MAPPING.leasingCompany.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const seller = FIELD_MAPPING.seller.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const lender = FIELD_MAPPING.lender.map((field: any) => ({
-        label: field.label,
-        value: formatValue(getCellValue(row, field.excel), field.format)
-      }));
-
-      const commentsValue = typeof FIELD_MAPPING.comments === 'object' && 'excel' in FIELD_MAPPING.comments
-        ? getCellValue(row, FIELD_MAPPING.comments.excel)
-        : '';
-
-      return {
-        propertyName,
-        profileFields,
-        detailsFields,
-        financialFields,
-        unitBreakout,
-        owner,
-        broker,
-        leasingCompany,
-        seller,
-        lender,
-        comments: commentsValue
-      };
-    }).filter(Boolean);
-
-    // Generate HTML
-    const html = generatePropertyReportHTML(properties, FIELD_MAPPING);
+    // Build the HTML with the shared, database-type-aware report builder
+    const { html } = buildReportHTMLFromExcelData(excelData, filterDate, report.database_type);
 
     // Launch Puppeteer and generate PDF
     const browser = await puppeteer.launch({

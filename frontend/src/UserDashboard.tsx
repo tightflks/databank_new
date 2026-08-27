@@ -282,6 +282,26 @@ function UserDashboard() {
           const idx = headers.findIndex((h: string) => h && h.trim().toLowerCase() === header.toLowerCase());
           return idx >= 0 ? (row[idx] || '') : '';
         };
+        // Resolve a value from the first header that exists in this file.
+        // Apartment and industrial files name several columns differently
+        // (e.g. UNITS COMPLETED vs # SQ FT BUILT), so each field lists its aliases.
+        const getCellAny = (...headerNames: string[]) => {
+          for (const name of headerNames) {
+            const idx = headers.findIndex((h: string) => h && h.trim().toLowerCase() === name.toLowerCase());
+            if (idx >= 0 && row[idx] !== undefined && row[idx] !== null && String(row[idx]).trim() !== '') return row[idx];
+          }
+          return '';
+        };
+        // Extract a 4-digit year from a value that may be a year or an Excel date serial
+        const yearFromValue = (v: any): string => {
+          if (v === undefined || v === null || String(v).trim() === '') return '';
+          const n = typeof v === 'number' ? v : parseFloat(String(v).trim());
+          if (isNaN(n)) return String(v).trim();
+          if (n >= 1500 && n <= 2200) return String(Math.round(n));
+          const formatted = formatExcelDate(n);
+          const parts = formatted.split('/');
+          return parts.length === 3 ? parts[2] : formatted;
+        };
         
         // Find "last/previous insider date" column with flexible matching
         const lastInsiderIdx = headers.findIndex((h: string) => {
@@ -292,12 +312,18 @@ function UserDashboard() {
         const lastInsiderRaw = lastInsiderIdx >= 0 ? (row[lastInsiderIdx] || '') : '';
 
         const salePriceStr = String(getCell('SALE PRICE')).trim();
-        const unitsStr = String(getCell('UNITS COMPLETED')).trim();
-        const pricePerUnit = computePricePerUnit(salePriceStr, unitsStr, String(getCell('$ UNIT PROJECT')).trim());
+        // Apartments size by units; industrial sizes by building square feet
+        const unitsStr = String(getCellAny('UNITS COMPLETED', '# SQ FT BUILT')).trim();
+        const pricePerUnit = computePricePerUnit(
+          salePriceStr,
+          unitsStr,
+          String(getCellAny('$ UNIT PROJECT', 'PRICE PER SF BUILDING')).trim(),
+          databaseType === 'industrial' ? 2 : 0
+        );
 
         return {
           propertyName: String(getCell('P NAME')).trim(),
-          description: String(getCell('P TYPE')).trim(),
+          description: String(getCellAny('P TYPE', 'PROJECT TYPE')).trim(),
           streetNumber: String(getCell('P STREET NUMBER')).trim(),
           streetName: String(getCell('P STREET NAME')).trim(),
           city: String(getCell('P CITY')).trim(),
@@ -312,17 +338,17 @@ function UserDashboard() {
           units: unitsStr,
           pricePerUnit: pricePerUnit > 0 ? String(pricePerUnit) : '',
           acres: String(getCell('# ACRES')).trim(),
-          yearBuilt: String(getCell('YEAR BUILT')).trim(),
+          yearBuilt: yearFromValue(getCellAny('YEAR BUILT', 'BUILT\\COMPLETE', 'ORIGINALLY BUILT')),
           address: String(getCell('P STREET NUMBER')).trim() + ' ' + String(getCell('P STREET NAME')).trim(),
           zip: String(getCell('P ZIP')).trim(),
           district: String(getCell('DISTRICT2')).trim(),
-          landLot: String(getCell('LAND LOT')).trim(),
+          landLot: String(getCellAny('LAND LOT', 'LANDLOT')).trim(),
           parcel: String(getCell('PARCEL')).trim(),
           taxOwner: String(getCell('TAX OWNER')).trim(),
           owner: String(getCell('OWNER')).trim(),
-          ownerAttention: String(getCell('OWNER2\\ATTENTION')).trim(),
-          seller: String(getCell('SELLER\\FORECLOSEE') || getCell('SELLER')).trim(),
-          loanAmount: String(getCell('$ LOAN')).trim(),
+          ownerAttention: String(getCellAny('OWNER2\\ATTENTION', 'ATTENTION')).trim(),
+          seller: String(getCellAny('SELLER\\FORECLOSEE', 'SELLER')).trim(),
+          loanAmount: String(getCellAny('$ LOAN', 'PERMANENT LOAN')).trim(),
           raw: row
         };
       }).filter((p: Property) => p.propertyName);
@@ -561,11 +587,33 @@ function UserDashboard() {
     return String(value).trim();
   };
 
+  // Resolve a report value from the first matching column alias (apartment vs industrial header names)
+  const getReportValueAny = (property: Property, ...colNames: string[]) => {
+    for (const colName of colNames) {
+      const value = getReportValue(property, colName);
+      if (value) return value;
+    }
+    return '';
+  };
+
+  // Industrial files size properties by square feet instead of unit counts
+  const isIndustrial = databaseType === 'industrial';
+  const unitLabel = isIndustrial ? 'Sq Ft' : 'Units';
+  const perUnitLabel = isIndustrial ? '$ / SF' : '$ / Unit';
+
   const formatCurrency = (value: string) => {
     if (!value) return '';
     const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
     if (isNaN(num) || num === 0) return '';
     return `$${num.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  };
+
+  // Price-per-unit values keep cents for industrial ($/SF is usually < $1,000)
+  const formatPerUnit = (value: string) => {
+    if (!value) return '';
+    const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+    if (isNaN(num) || num === 0) return '';
+    return `$${num.toLocaleString('en-US', { maximumFractionDigits: isIndustrial ? 2 : 0 })}`;
   };
 
   const formatUnits = (value: string) => {
@@ -584,6 +632,7 @@ function UserDashboard() {
 
   const buildReportSections = (property: Property) => {
     const get = (col: string) => getReportValue(property, col);
+    const getAny = (...cols: string[]) => getReportValueAny(property, ...cols);
     return [
       {
         title: 'Property Profile',
@@ -606,15 +655,15 @@ function UserDashboard() {
           { label: 'Previous Insider Date 1', value: get('PREVIOUS INSIDER DATE 1') },
           { label: 'Previous Insider Date 2', value: get('PREVIOUS INSIDER DATE 2') },
           { label: 'Previous Insider Date 3', value: get('PREVIOUS INSIDER DATE 3') },
-          { label: 'Insider Description', value: get('P TYPE') },
-          { label: 'Units / $ Unit', value: [formatUnits(get('UNITS COMPLETED')), formatCurrency(property.pricePerUnit) || get('$ UNIT PROJECT')].filter(Boolean).join(' / ') },
+          { label: 'Insider Description', value: getAny('P TYPE', 'PROJECT TYPE') },
+          { label: isIndustrial ? 'Sq Ft / $ SF' : 'Units / $ Unit', value: [formatUnits(getAny('UNITS COMPLETED', '# SQ FT BUILT')), formatPerUnit(property.pricePerUnit) || formatPerUnit(getAny('$ UNIT PROJECT', 'PRICE PER SF BUILDING'))].filter(Boolean).join(' / ') },
           { label: 'Tax Owner', value: get('TAX OWNER') },
           { label: 'Owner (Buyer)', value: get('OWNER') },
-          { label: 'Seller', value: get('SELLER\\FORECLOSEE') },
+          { label: 'Seller', value: getAny('SELLER\\FORECLOSEE', 'SELLER') },
           { label: 'Onsite Telephone', value: get('ONSITE PHONE') },
-          { label: 'Acres / $ Per Acre', value: [get('# ACRES'), get('$ ACRE')].filter(Boolean).join(' / ') },
-          { label: 'Square Ft', value: get('HEATED SF') },
-          { label: 'Loan Amount', value: formatCurrency(get('$ LOAN')) },
+          { label: 'Acres / $ Per Acre', value: [get('# ACRES'), formatCurrency(getAny('$ ACRE', 'PRICE PER ACRE'))].filter(Boolean).join(' / ') },
+          ...(isIndustrial ? [] : [{ label: 'Square Ft', value: formatUnits(get('HEATED SF')) }]),
+          { label: 'Loan Amount', value: formatCurrency(getAny('$ LOAN', 'PERMANENT LOAN')) },
           { label: 'Attorney Name', value: get('ATTORNEY') },
           { label: 'Attorney Telephone', value: get('ATTORNEY PHONE') },
         ],
@@ -626,9 +675,9 @@ function UserDashboard() {
           { label: 'Property Sale Date', value: get('SALE DATE') },
           { label: 'Land Sale Amount', value: formatCurrency(get('LAND SALE PRICE')) },
           { label: 'Land Sale Date', value: get('LAND SALE DATE') },
-          { label: 'Equity', value: formatCurrency(get('$ EQUITY')) },
-          { label: 'Down Payment', value: formatCurrency(get('$ DOWNPAYMENT')) },
-          { label: 'Purchase Note', value: formatCurrency(get('$ PURCHASE NOTE')) },
+          { label: 'Equity', value: formatCurrency(getAny('$ EQUITY', 'EQUITY')) },
+          { label: 'Down Payment', value: formatCurrency(getAny('$ DOWNPAYMENT', 'DOWNPAYMENT')) },
+          { label: 'Purchase Note', value: formatCurrency(getAny('$ PURCHASE NOTE', 'PURCHASE NOTE')) },
           { label: 'Utility', value: get('UTILITIES') },
           { label: 'Application Fee', value: formatCurrency(get('APPLICATION FEE')) },
           { label: 'Refund Amount', value: formatCurrency(get('REFUND')) },
@@ -774,7 +823,7 @@ function UserDashboard() {
                   <div className="bg-amber-50 rounded-xl p-4">
                     <div className="flex items-center gap-2 text-amber-600 mb-1">
                       <Database className="w-4 h-4" />
-                      <span className="text-xs font-semibold uppercase tracking-wide">Total Units</span>
+                      <span className="text-xs font-semibold uppercase tracking-wide">Total {unitLabel}</span>
                     </div>
                     <p className="text-2xl font-bold text-gray-900">{recentInsiderStats.totalUnits > 0 ? recentInsiderStats.totalUnits.toLocaleString() : '-'}</p>
                   </div>
@@ -945,7 +994,7 @@ function UserDashboard() {
                     <span className="font-medium text-gray-700 truncate mr-4">{owner}</span>
                     <span className="text-sm text-gray-500 flex-shrink-0">
                       <span className="font-semibold text-indigo-600">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
-                      {units > 0 && <span className="ml-2 text-gray-600">{units.toLocaleString()} units</span>}
+                      {units > 0 && <span className="ml-2 text-gray-600">{units.toLocaleString()} {unitLabel.toLowerCase()}</span>}
                       {volume > 0 && <span className="ml-2 text-green-600 font-semibold">{formatCompactCurrency(volume)}</span>}
                     </span>
                   </div>
@@ -1417,7 +1466,7 @@ function UserDashboard() {
                   type="number"
                   value={minPricePerUnit}
                   onChange={(e) => setMinPricePerUnit(e.target.value)}
-                  placeholder="Min $/Unit"
+                  placeholder={isIndustrial ? 'Min $/SF' : 'Min $/Unit'}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                 />
                 <span className="text-gray-500">-</span>
@@ -1425,7 +1474,7 @@ function UserDashboard() {
                   type="number"
                   value={maxPricePerUnit}
                   onChange={(e) => setMaxPricePerUnit(e.target.value)}
-                  placeholder="Max $/Unit"
+                  placeholder={isIndustrial ? 'Max $/SF' : 'Max $/Unit'}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                 />
               </div>
@@ -1434,7 +1483,7 @@ function UserDashboard() {
                   type="number"
                   value={minUnits}
                   onChange={(e) => setMinUnits(e.target.value)}
-                  placeholder="Min Units"
+                  placeholder={`Min ${unitLabel}`}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                 />
                 <span className="text-gray-500">-</span>
@@ -1442,7 +1491,7 @@ function UserDashboard() {
                   type="number"
                   value={maxUnits}
                   onChange={(e) => setMaxUnits(e.target.value)}
-                  placeholder="Max Units"
+                  placeholder={`Max ${unitLabel}`}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                 />
               </div>
@@ -1470,9 +1519,9 @@ function UserDashboard() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Property</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">City</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">County</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Units</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{unitLabel}</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Price</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">$ / Unit</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{perUnitLabel}</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Insider Date</th>
                     <th className="px-4 py-3"></th>
@@ -1487,7 +1536,7 @@ function UserDashboard() {
                         <td className="px-4 py-3 text-sm text-gray-600">{property.county}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{formatUnits(property.units)}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{formatCurrency(property.salePrice)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{formatCurrency(property.pricePerUnit)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{formatPerUnit(property.pricePerUnit)}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.insiderDate}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{property.lastInsiderDate}</td>
                         <td className="px-4 py-3 text-sm" onClick={(e) => { e.stopPropagation(); setExpandedRow(expandedRow === idx ? null : idx); }}>
@@ -1532,7 +1581,7 @@ function UserDashboard() {
                                   </button>
                                 ) : '—'}
                               </div>
-                              <div><span className="font-semibold">Price / Unit:</span> {formatCurrency(property.pricePerUnit) || '—'}</div>
+                              <div><span className="font-semibold">Price / {isIndustrial ? 'SF' : 'Unit'}:</span> {formatPerUnit(property.pricePerUnit) || '—'}</div>
                               <div><span className="font-semibold">Loan Amount:</span> {formatCurrency(property.loanAmount) || '—'}</div>
                             </div>
                           </td>

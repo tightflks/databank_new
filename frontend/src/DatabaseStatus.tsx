@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Loader2, FileSpreadsheet, Calendar, FileArchive, Layers, FileText, AlertCircle, RefreshCw, Upload, CheckCircle } from 'lucide-react';
+import { Loader2, FileSpreadsheet, Calendar, FileArchive, Layers, FileText, AlertCircle, RefreshCw, Upload, CheckCircle, Cloud, CloudDownload } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 interface LatestUpload {
   id: number;
+  filename: string;
   original_filename: string;
   upload_date: string;
   file_size: number;
@@ -35,6 +36,8 @@ function DatabaseStatus() {
   const [error, setError] = useState<string | null>(null);
   const [uploadingType, setUploadingType] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const handleFileSelected = async (databaseType: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,6 +70,31 @@ function DatabaseStatus() {
     } finally {
       setUploadingType(null);
       e.target.value = '';
+    }
+  };
+
+  const syncDropbox = async () => {
+    setSyncing(true);
+    setError(null);
+    setSyncNote(null);
+    try {
+      const { data } = await axios.post(`${API_URL}/api/databases/sync-dropbox`);
+      const results: { database_type: string; week: string | null; status: string; error?: string }[] = data.results;
+      const attached = results.filter((r) => r.status === 'attached').length;
+      const failed = results.filter((r) => r.status === 'error');
+      const week = results.find((r) => r.week)?.week;
+      setSyncNote(
+        failed.length
+          ? `Dropbox: ${failed.map((r) => `${r.database_type} — ${r.error}`).join('; ')}`
+          : attached
+            ? `${attached} database${attached !== 1 ? 's' : ''} updated to Dropbox week ${week}`
+            : `All databases already on the latest Dropbox week${week ? ` (${week})` : ''}`
+      );
+      await fetchDatabases();
+    } catch (err) {
+      setError((axios.isAxiosError(err) && err.response?.data?.error) || 'Dropbox sync failed. Please try again.');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -112,16 +140,37 @@ function DatabaseStatus() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl font-bold text-gray-800 mb-1">Database Status</h2>
-          <p className="text-gray-600">Current file/version attached to each database</p>
+          <p className="text-gray-600">
+            Current file/version attached to each database — the latest weekly CSV from Dropbox is attached automatically
+          </p>
         </div>
-        <button
-          onClick={fetchDatabases}
-          className="px-4 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-50 border border-gray-200 transition-colors flex items-center gap-2 text-sm font-medium shadow-sm"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={syncDropbox}
+            disabled={syncing}
+            className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium shadow-sm ${
+              syncing ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudDownload className="w-4 h-4" />}
+            {syncing ? 'Syncing…' : 'Sync from Dropbox'}
+          </button>
+          <button
+            onClick={fetchDatabases}
+            className="px-4 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-50 border border-gray-200 transition-colors flex items-center gap-2 text-sm font-medium shadow-sm"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {syncNote && (
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2">
+          <Cloud className="w-5 h-5 text-blue-600 flex-shrink-0" />
+          <p className="text-blue-800 text-sm">{syncNote}</p>
+        </div>
+      )}
 
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
@@ -143,6 +192,7 @@ function DatabaseStatus() {
               color: 'border-gray-300',
             };
             const upload = dbInfo.latest_upload;
+            const fromDropbox = upload?.filename.startsWith('dropbox:') ?? false;
 
             return (
               <div
@@ -181,7 +231,9 @@ function DatabaseStatus() {
                         <p className="text-sm font-semibold text-gray-800 truncate" title={upload.original_filename}>
                           {upload.original_filename}
                         </p>
-                        <p className="text-xs text-gray-500">Current attached file</p>
+                        <p className="text-xs text-gray-500">
+                          {fromDropbox ? 'From Dropbox · updated weekly' : 'Current attached file (manual upload)'}
+                        </p>
                       </div>
                     </div>
 

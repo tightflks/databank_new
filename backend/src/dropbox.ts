@@ -147,6 +147,42 @@ async function loadRows(type: string, week: string): Promise<Parsed> {
   return parsed;
 }
 
+// ---------- Latest week as an Excel-shaped sheet (feeds the uploads table) ----------
+
+export function dropboxConfigured(): boolean {
+  return !!(process.env.DROPBOX_APP_KEY && process.env.DROPBOX_APP_SECRET && process.env.DROPBOX_REFRESH_TOKEN);
+}
+
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const NUMBER = /^-?\d+(\.\d+)?$/;
+
+// Same cell types sheet_to_json(header: 1) yields for the hand-exported .xls: numbers as numbers,
+// dates as MM/DD/YYYY strings, blanks as null.
+export function excelCell(v: string): string | number | null {
+  if (v === '') return null;
+  const d = ISO_DATE.exec(v);
+  if (d) return `${d[2]}/${d[3]}/${d[1]}`;
+  if (NUMBER.test(v)) return Number(v);
+  return v;
+}
+
+export type LatestSheet = { week: string; type: string; file: string; data: (string | number | null)[][] };
+
+export async function latestSheet(databaseId: string): Promise<LatestSheet | null> {
+  const db = DATABASES.find((d) => d.id === databaseId);
+  if (!db) throw new Error(`Unknown database "${databaseId}"`);
+  const s = (await summary()) as { databases: { id: string; latestWeek: string | null }[] };
+  const week = s.databases.find((d) => d.id === databaseId)?.latestWeek;
+  if (!week) return null;
+  const { columns, rows } = await loadRows(db.type, week);
+  return {
+    week,
+    type: db.type,
+    file: `${db.type}.csv`,
+    data: [columns, ...rows.map((r) => r.map(excelCell))],
+  };
+}
+
 // ---------- Properties: one record per property with its history ----------
 
 const TYPE = /^[A-Z]{1,16}$/;

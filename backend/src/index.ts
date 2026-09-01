@@ -7,7 +7,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
-import { registerDropboxRoutes } from './dropbox';
+import { registerDropboxRoutes, dropboxConfigured, latestSheet } from './dropbox';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -1781,6 +1781,59 @@ app.get('/api/databases', (req: Request, res: Response) => {
   }
 });
 
+// ==================== DROPBOX → DATABASES ====================
+// Attach the latest weekly CSV from Dropbox to each database as a new upload version, so Search,
+// Generate and Reports run off it exactly like a hand-uploaded .xls. One version per (type, week).
+
+const DROPBOX_SYNC_MS = 6 * 60 * 60 * 1000;
+const findDropboxUploadStmt: any = db.prepare(`SELECT id FROM uploads WHERE database_type = ? AND filename = ?`);
+
+type DropboxSyncResult = { database_type: string; week: string | null; status: 'attached' | 'current' | 'no-file' | 'error'; upload_id?: number; rows?: number; error?: string };
+
+async function syncDatabaseFromDropbox(databaseType: string): Promise<DropboxSyncResult> {
+  try {
+    const sheet = await latestSheet(databaseType);
+    if (!sheet) return { database_type: databaseType, week: null, status: 'no-file' };
+    const marker = `dropbox:${sheet.type}:${sheet.week}`;
+    const existing = findDropboxUploadStmt.get(databaseType, marker) as any;
+    if (existing) return { database_type: databaseType, week: sheet.week, status: 'current', upload_id: existing.id };
+    const size = Buffer.byteLength(JSON.stringify(sheet.data));
+    const uploadId = saveUploadToDb(marker, `${sheet.file} — Dropbox week ${sheet.week}`, size, 1, sheet.data, databaseType);
+    console.log(`✅ Attached Dropbox ${sheet.file} (${sheet.week}) to database "${databaseType}" as upload ${uploadId}`);
+    return { database_type: databaseType, week: sheet.week, status: 'attached', upload_id: uploadId, rows: sheet.data.length };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    console.error(`Dropbox sync failed for "${databaseType}":`, error);
+    return { database_type: databaseType, week: null, status: 'error', error };
+  }
+}
+
+async function syncAllDatabasesFromDropbox(): Promise<DropboxSyncResult[]> {
+  const results: DropboxSyncResult[] = [];
+  for (const type of DATABASE_TYPES) results.push(await syncDatabaseFromDropbox(type));
+  return results;
+}
+
+app.post('/api/databases/sync-dropbox', async (req: Request, res: Response) => {
+  if (!dropboxConfigured()) {
+    return res.status(400).json({ error: 'Dropbox is not configured (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN)' });
+  }
+  res.json({ results: await syncAllDatabasesFromDropbox() });
+});
+
+app.post('/api/databases/:type/sync-dropbox', async (req: Request, res: Response) => {
+  if (!dropboxConfigured()) {
+    return res.status(400).json({ error: 'Dropbox is not configured (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN)' });
+  }
+  const databaseType = normalizeDatabaseType(req.params.type);
+  if (databaseType !== String(req.params.type).trim().toLowerCase()) {
+    return res.status(400).json({ error: 'Invalid database type' });
+  }
+  const result = await syncDatabaseFromDropbox(databaseType);
+  if (result.status === 'error') return res.status(502).json({ error: result.error, result });
+  res.json({ result, upload: result.upload_id ? getUploadByIdFromDb(result.upload_id) : null });
+});
+
 // Upload a new file version directly to a specific database
 app.post('/api/databases/:type/upload', upload.single('file'), (req: Request, res: Response) => {
   try {
@@ -2506,4 +2559,10 @@ if (fs.existsSync(frontendDist)) {
 // Start the server
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
+  if (dropboxConfigured()) {
+    syncAllDatabasesFromDropbox();
+    setInterval(syncAllDatabasesFromDropbox, DROPBOX_SYNC_MS);
+  } else {
+    console.log('Dropbox not configured — databases stay on manual uploads');
+  }
 });

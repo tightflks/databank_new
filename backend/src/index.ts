@@ -7,6 +7,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
+import { registerDropboxRoutes } from './dropbox';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -2485,6 +2486,9 @@ app.get('/api/health', (req: Request, res: Response) => {
     uploadCount: getUploadCountFromDb()
   });
 });
+
+// Property Search over the Dropbox archive (weekly CSVs + per-property history)
+registerDropboxRoutes(app);
 
 // Serve the built frontend (production)
 const frontendDist = path.join(__dirname, '../../frontend/dist');

@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles } from 'lucide-react';
+import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
+import PropertyHistory from './PropertyHistory';
 import { computePricePerUnit } from './utils/pricePerUnit';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
@@ -50,7 +51,7 @@ interface Filters {
 }
 
 function UserDashboard() {
-  const [activeView, setActiveView] = useState<'search' | 'dashboard' | 'reports'>('search');
+  const [activeView, setActiveView] = useState<'search' | 'history' | 'dashboard' | 'reports'>('search');
   const [databaseType, setDatabaseType] = useState('apartments');
   const [reports, setReports] = useState<SavedReport[]>([]);
   const [filteredReports, setFilteredReports] = useState<SavedReport[]>([]);
@@ -707,6 +708,7 @@ function UserDashboard() {
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Property Search</h1>
           <p className="text-lg text-gray-600">
             {activeView === 'search' && 'Search current and historical property records across all insider dates'}
+            {activeView === 'history' && 'One record per property across every weekly file since 2022 — owners, sales and changes'}
             {activeView === 'dashboard' && 'Market insights and activity from the latest upload'}
             {activeView === 'reports' && 'Browse and access saved property reports'}
           </p>
@@ -743,6 +745,17 @@ function UserDashboard() {
           >
             <Search className="w-5 h-5" />
             Search Database
+          </button>
+          <button
+            onClick={() => setActiveView('history')}
+            className={`flex-1 py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeView === 'history'
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
+                : 'bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <History className="w-5 h-5" />
+            Property History
           </button>
           <button
             onClick={() => setActiveView('dashboard')}
@@ -1593,6 +1606,8 @@ function UserDashboard() {
               </table>
             </div>
           </div>
+        ) : activeView === 'history' ? (
+          <PropertyHistory databaseType={databaseType} />
         ) : null}
 
         {/* Full Property Report Modal */}

@@ -48,8 +48,11 @@ const databaseLabel = (value?: string) => {
   return option ? option.label : value || '';
 };
 
+// Customers land on / (User View only); administrators use /admin.
+const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
+
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases'>('user');
+  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -61,7 +64,7 @@ function App() {
   const logout = async () => {
     await axios.post(`${API_URL}/api/auth/logout`).catch(() => undefined);
     setIsAdmin(false);
-    setActiveTab('user');
+    setActiveTab('generate');
   };
   const [selectedDatabase, setSelectedDatabase] = useState('apartments');
   const [uploads, setUploads] = useState<SavedUpload[]>([]);
@@ -248,19 +251,8 @@ function App() {
           </p>
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <button
-            onClick={() => setActiveTab('user')}
-            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'user'
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
-                : 'bg-white/50 text-gray-600 hover:bg-white/80'
-            }`}
-          >
-            <Users className="w-5 h-5" />
-            User View
-          </button>
+        {/* Navigation Tabs (admin only) */}
+        {ADMIN_ROUTE && <div className="grid grid-cols-3 gap-4 mb-6">
           <button
             onClick={() => setActiveTab('generate')}
             className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
@@ -294,18 +286,23 @@ function App() {
             <FileArchive className="w-5 h-5" />
             Databases
           </button>
-        </div>
+        </div>}
 
-        {activeTab !== 'user' && isAdmin && (
-          <div className="flex justify-end mb-4">
-            <button onClick={logout} className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1">
+        {ADMIN_ROUTE && isAdmin && (
+          <div className="flex justify-end mb-4 gap-4 text-sm">
+            <a href="/" className="text-gray-600 hover:text-gray-900 flex items-center gap-1">
+              <Users className="w-4 h-4" /> Open User View
+            </a>
+            <button onClick={logout} className="text-gray-600 hover:text-gray-900 flex items-center gap-1">
               <LogOut className="w-4 h-4" /> Sign out
             </button>
           </div>
         )}
 
         {/* Tab Content */}
-        {activeTab !== 'user' && !isAdmin ? (
+        {!ADMIN_ROUTE ? (
+          <UserDashboard />
+        ) : !isAdmin ? (
           isAdmin === null ? null : <AdminLogin onLogin={() => setIsAdmin(true)} />
         ) : activeTab === 'generate' ? (
           <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-xl p-8">

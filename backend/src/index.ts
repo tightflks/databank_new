@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { registerDropboxRoutes, dropboxConfigured, latestSheet, DATABASES } from './dropbox';
 import * as dropboxAsk from './dropbox';
+import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -612,8 +613,12 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
 }
 
 // Middleware
-app.use(cors());
+app.set('trust proxy', 1);
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+registerAuthRoutes(app);
+
+const ASK_AI_PER_HOUR = Number(process.env.ASK_AI_PER_HOUR) || 30;
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -631,7 +636,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 });
 
 // Get available insider dates from Excel file
-app.post('/api/dates', upload.single('file'), async (req: Request, res: Response) => {
+app.post('/api/dates', requireAdmin, upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -872,7 +877,7 @@ app.post('/api/search', upload.single('file'), async (req: Request, res: Respons
 });
 
 // Convert Excel to PDF using HTML template (Puppeteer)
-app.post('/api/convert-html', upload.single('file'), async (req: Request, res: Response) => {
+app.post('/api/convert-html', requireAdmin, upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -1103,7 +1108,7 @@ app.post('/api/convert-html', upload.single('file'), async (req: Request, res: R
 });
 
 // Preview HTML template endpoint (for web viewing)
-app.post('/api/preview-html', upload.single('file'), async (req: Request, res: Response) => {
+app.post('/api/preview-html', requireAdmin, upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -1308,7 +1313,7 @@ app.post('/api/preview-html', upload.single('file'), async (req: Request, res: R
 });
 
 // Convert Excel to PDF endpoint (original pdf-lib version - keeping for backwards compatibility)
-app.post('/api/convert', upload.single('file'), async (req: Request, res: Response) => {
+app.post('/api/convert', requireAdmin, upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -1727,7 +1732,7 @@ app.get('/api/uploads/:id/data', (req: Request, res: Response) => {
 });
 
 // Delete an upload
-app.delete('/api/uploads/:id', (req: Request, res: Response) => {
+app.delete('/api/uploads/:id', requireAdmin, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -1815,14 +1820,14 @@ async function syncAllDatabasesFromDropbox(): Promise<DropboxSyncResult[]> {
   return results;
 }
 
-app.post('/api/databases/sync-dropbox', async (req: Request, res: Response) => {
+app.post('/api/databases/sync-dropbox', requireAdmin, async (req: Request, res: Response) => {
   if (!dropboxConfigured()) {
     return res.status(400).json({ error: 'Dropbox is not configured (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN)' });
   }
   res.json({ results: await syncAllDatabasesFromDropbox() });
 });
 
-app.post('/api/databases/:type/sync-dropbox', async (req: Request, res: Response) => {
+app.post('/api/databases/:type/sync-dropbox', requireAdmin, async (req: Request, res: Response) => {
   if (!dropboxConfigured()) {
     return res.status(400).json({ error: 'Dropbox is not configured (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN)' });
   }
@@ -1836,7 +1841,7 @@ app.post('/api/databases/:type/sync-dropbox', async (req: Request, res: Response
 });
 
 // Upload a new file version directly to a specific database
-app.post('/api/databases/:type/upload', upload.single('file'), (req: Request, res: Response) => {
+app.post('/api/databases/:type/upload', requireAdmin, upload.single('file'), (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -2156,7 +2161,7 @@ const CORE_COLUMNS = new Set([
   'BUILT\\COMPLETE', 'ORIGINALLY BUILT', 'YEAR BUILT', 'AKA', 'DESCRIPTION', 'INSIDER DESCRIPTION',
 ]);
 
-app.post('/api/nl-search', async (req: Request, res: Response) => {
+app.post('/api/nl-search', rateLimit(ASK_AI_PER_HOUR), async (req: Request, res: Response) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -2359,7 +2364,7 @@ app.get('/api/uploads/:id/preview', (req: Request, res: Response) => {
 });
 
 // Generate PDF from a stored upload (no re-upload required)
-app.post('/api/uploads/:id/generate-pdf', async (req: Request, res: Response) => {
+app.post('/api/uploads/:id/generate-pdf', requireAdmin, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2487,7 +2492,7 @@ app.get('/api/reports/:id', (req: Request, res: Response) => {
 });
 
 // Delete a saved report
-app.delete('/api/reports/:id', (req: Request, res: Response) => {
+app.delete('/api/reports/:id', requireAdmin, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2537,7 +2542,7 @@ app.get('/api/reports/:id/view', async (req: Request, res: Response) => {
 });
 
 // Regenerate PDF from saved report
-app.post('/api/reports/:id/regenerate-pdf', async (req: Request, res: Response) => {
+app.post('/api/reports/:id/regenerate-pdf', requireAdmin, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {

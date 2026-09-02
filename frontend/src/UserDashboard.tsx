@@ -3,6 +3,7 @@ import axios from 'axios';
 import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
+import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
@@ -99,6 +100,10 @@ function UserDashboard() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
+  const [aiHistory, setAiHistory] = useState<HistoryAnswer | null>(null);
+  // Ask AI filters on columns that have no dedicated control: contains-text and numeric ranges by header
+  const [aiFields, setAiFields] = useState<Record<string, string>>({});
+  const [aiRanges, setAiRanges] = useState<Record<string, { min?: number; max?: number }>>({});
   const [saleDateAfter, setSaleDateAfter] = useState('');
   const [saleDateBefore, setSaleDateBefore] = useState('');
   const [insiderDateAfter, setInsiderDateAfter] = useState('');
@@ -221,7 +226,7 @@ function UserDashboard() {
 
   useEffect(() => {
     applyPropertyFilters();
-  }, [propertySearchText, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, properties]);
+  }, [propertySearchText, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, properties]);
 
   const fetchReports = async () => {
     setLoading(true);
@@ -304,13 +309,15 @@ function UserDashboard() {
           return parts.length === 3 ? parts[2] : formatted;
         };
         
-        // Find "last/previous insider date" column with flexible matching
-        const lastInsiderIdx = headers.findIndex((h: string) => {
-          if (!h) return false;
-          const lower = h.trim().toLowerCase();
-          return lower.includes('insider') && lower.includes('date') && (lower.includes('previous') || lower.includes('last'));
-        });
-        const lastInsiderRaw = lastInsiderIdx >= 0 ? (row[lastInsiderIdx] || '') : '';
+        // INSIDER DATE is the latest report the property appeared in; PREVIOUS INSIDER DATE 1..3 are the
+        // earlier ones (not always kept in order), so the "previous" shown is the newest of those.
+        const latestInsider = formatExcelDate(getCell('INSIDER DATE'));
+        const previousInsider = headers
+          .map((h: string, i: number) => ({ h: (h || '').trim().toUpperCase(), i }))
+          .filter(({ h }: { h: string }) => /^PREVIOUS INSIDER DATE/.test(h))
+          .map(({ i }: { i: number }) => formatExcelDate(row[i]))
+          .filter((d: string) => d && d !== latestInsider && !isNaN(new Date(d).getTime()))
+          .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime())[0] || '';
 
         const salePriceStr = String(getCell('SALE PRICE')).trim();
         // Apartments size by units; industrial sizes by building square feet
@@ -330,8 +337,8 @@ function UserDashboard() {
           city: String(getCell('P CITY')).trim(),
           county: String(getCell('COUNTY')).trim(),
           marketArea: String(getCell('MARKET AREA')).trim(),
-          insiderDate: formatExcelDate(getCell('INSIDER DATE')),
-          lastInsiderDate: formatExcelDate(lastInsiderRaw),
+          insiderDate: latestInsider,
+          lastInsiderDate: previousInsider,
           salePrice: salePriceStr,
           saleDate: formatExcelDate(getCell('SALE DATE')),
           landSalePrice: String(getCell('LAND SALE PRICE')).trim(),
@@ -354,10 +361,12 @@ function UserDashboard() {
         };
       }).filter((p: Property) => p.propertyName);
       
-      const cities = [...new Set(processedProperties.map((p: Property) => p.city).filter(Boolean))] as string[];
-      const counties = [...new Set(processedProperties.map((p: Property) => p.county).filter(Boolean))] as string[];
-      const marketAreas = [...new Set(processedProperties.map((p: Property) => p.marketArea).filter(Boolean))] as string[];
-      const dates = [...new Set(processedProperties.map((p: Property) => p.insiderDate).filter(Boolean))] as string[];
+      const alpha = (a: string, b: string) => a.localeCompare(b, 'en', { sensitivity: 'base' });
+      const cities = ([...new Set(processedProperties.map((p: Property) => p.city).filter(Boolean))] as string[]).sort(alpha);
+      const counties = ([...new Set(processedProperties.map((p: Property) => p.county).filter(Boolean))] as string[]).sort(alpha);
+      const marketAreas = ([...new Set(processedProperties.map((p: Property) => p.marketArea).filter(Boolean))] as string[]).sort(alpha);
+      const dates = ([...new Set(processedProperties.map((p: Property) => p.insiderDate).filter(Boolean))] as string[])
+        .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
       
       const prices = processedProperties.map((p: Property) => parseFloat(p.salePrice?.replace(/[^0-9.-]/g, '') || '0')).filter((p: number) => p > 0);
       const priceRange = prices.length > 0 ? { min: Math.min(...prices), max: Math.max(...prices) } : { min: 0, max: 0 };
@@ -473,7 +482,28 @@ function UserDashboard() {
     if (landSaleDateAfter || landSaleDateBefore) {
       filtered = filtered.filter(p => p.landSaleDate && inDateRange(p.landSaleDate, landSaleDateAfter, landSaleDateBefore));
     }
-    
+
+    // Ask AI: arbitrary columns by header name
+    const colIdx = (name: string) => excelHeaders.findIndex(h => h && h.trim().toUpperCase() === name.trim().toUpperCase());
+    for (const [col, text] of Object.entries(aiFields)) {
+      const idx = colIdx(col);
+      if (idx < 0 || !text) continue;
+      const needle = String(text).toLowerCase();
+      filtered = filtered.filter(p => {
+        const v = String(p.raw?.[idx] ?? '').trim();
+        return needle === '*' ? v !== '' : v.toLowerCase().includes(needle);
+      });
+    }
+    for (const [col, r] of Object.entries(aiRanges)) {
+      const idx = colIdx(col);
+      if (idx < 0 || !r) continue;
+      filtered = filtered.filter(p => {
+        const n = parseNum(String(p.raw?.[idx] ?? ''));
+        if (!n && String(p.raw?.[idx] ?? '').trim() === '') return false;
+        return (r.min == null || n >= r.min) && (r.max == null || n <= r.max);
+      });
+    }
+
     setFilteredProperties(filtered);
   };
 
@@ -508,6 +538,9 @@ function UserDashboard() {
     setInsiderDateBefore('');
     setLandSaleDateAfter('');
     setLandSaleDateBefore('');
+    setAiFields({});
+    setAiRanges({});
+    setAiHistory(null);
     setAiExplanation(null);
     setAiError(null);
   };
@@ -526,6 +559,15 @@ function UserDashboard() {
       });
 
       const f = response.data.filters || {};
+
+      if (response.data.history) {
+        // Cross-week question: answered from the Dropbox archive, current-week filters untouched
+        setAiHistory(response.data.history as HistoryAnswer);
+        setAiExplanation(f.explanation || 'Answered from the archive of weekly files.');
+        setActiveView('search');
+        return;
+      }
+      setAiHistory(null);
 
       // The AI may return a single value or an array; take the first entry either way
       const one = (v: any) => (v == null ? '' : String(Array.isArray(v) ? v[0] ?? '' : v));
@@ -568,6 +610,8 @@ function UserDashboard() {
       setInsiderDateBefore(f.insider_date_before || '');
       setLandSaleDateAfter(f.land_sale_date_after || '');
       setLandSaleDateBefore(f.land_sale_date_before || '');
+      setAiFields(f.fields && typeof f.fields === 'object' ? f.fields : {});
+      setAiRanges(f.ranges && typeof f.ranges === 'object' ? f.ranges : {});
       setAiExplanation(f.explanation || 'Filters applied.');
       // "Who owns..." questions land on the dashboard's Top Owners panel
       setActiveView(f.show_top_owners ? 'dashboard' : 'search');
@@ -1249,7 +1293,7 @@ function UserDashboard() {
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles className="w-5 h-5 text-indigo-600" />
                 <h3 className="font-bold text-gray-800">Ask AI</h3>
-                <span className="text-xs text-gray-500">e.g. "everything Novare sold", "who owns a lot in Midtown", "sales under $150k per unit"</span>
+                <span className="text-xs text-gray-500">this week's list, or the whole archive: "who owned 1000 Belmont before?", "everything Novare sold", "sales under $150k per unit"</span>
               </div>
               <div className="flex gap-2">
                 <input
@@ -1309,7 +1353,22 @@ function UserDashboard() {
                   )}
                 </div>
               )}
+              {(Object.keys(aiFields).length > 0 || Object.keys(aiRanges).length > 0) && (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {Object.entries(aiFields).map(([k, v]) => (
+                    <span key={k} className="bg-white border border-indigo-200 text-indigo-700 px-3 py-1 rounded-full font-medium">{v === '*' ? `has ${k}` : `${k} contains “${v}”`}</span>
+                  ))}
+                  {Object.entries(aiRanges).map(([k, r]) => (
+                    <span key={k} className="bg-white border border-indigo-200 text-indigo-700 px-3 py-1 rounded-full font-medium">
+                      {k}: {r.min != null ? `≥ ${r.min.toLocaleString()}` : ''}{r.min != null && r.max != null ? ' and ' : ''}{r.max != null ? `≤ ${r.max.toLocaleString()}` : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <AskCatalogue onPick={(q) => setAiQuery(q)} />
             </div>
+
+            {aiHistory && <HistoryResults answer={aiHistory} onClose={() => setAiHistory(null)} />}
 
             {/* Property Search Bar */}
             <div className="mb-4">
@@ -1535,8 +1594,8 @@ function UserDashboard() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{unitLabel}</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Price</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{perUnitLabel}</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Insider Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Insider Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Previous Insider Date</th>
                     <th className="px-4 py-3"></th>
                   </tr>
                 </thead>

@@ -1784,7 +1784,7 @@ app.get('/api/databases', (req: Request, res: Response) => {
 
 // ==================== DROPBOX → DATABASES ====================
 // Attach the latest weekly CSV from Dropbox to each database as a new upload version, so Search,
-// Generate and Reports run off it exactly like a hand-uploaded .xls. One version per (type, week).
+// Generate and Reports run off it exactly like a hand-uploaded .xls. One version per (type, week, file rev).
 
 const DROPBOX_SYNC_MS = 6 * 60 * 60 * 1000;
 const findDropboxUploadStmt: any = db.prepare(`SELECT id FROM uploads WHERE database_type = ? AND filename = ?`);
@@ -1795,7 +1795,7 @@ async function syncDatabaseFromDropbox(databaseType: string): Promise<DropboxSyn
   try {
     const sheet = await latestSheet(databaseType);
     if (!sheet) return { database_type: databaseType, week: null, status: 'no-file' };
-    const marker = `dropbox:${sheet.type}:${sheet.week}`;
+    const marker = `dropbox:${sheet.type}:${sheet.week}:${sheet.rev}`;
     const existing = findDropboxUploadStmt.get(databaseType, marker) as any;
     if (existing) return { database_type: databaseType, week: sheet.week, status: 'current', upload_id: existing.id };
     const size = Buffer.byteLength(JSON.stringify(sheet.data));

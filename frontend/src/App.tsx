@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users } from 'lucide-react';
+import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut } from 'lucide-react';
 import UserDashboard from './UserDashboard';
 import DatabaseStatus from './DatabaseStatus';
+import AdminLogin from './AdminLogin';
+
+axios.defaults.withCredentials = true;
 
 const DATABASE_OPTIONS = [
   { value: 'apartments', label: '🏢 Apartments' },
@@ -47,6 +50,19 @@ const databaseLabel = (value?: string) => {
 
 function App() {
   const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases'>('user');
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    axios.get(`${API_URL}/api/auth/me`)
+      .then(r => setIsAdmin(Boolean(r.data?.admin)))
+      .catch(() => setIsAdmin(false));
+  }, []);
+
+  const logout = async () => {
+    await axios.post(`${API_URL}/api/auth/logout`).catch(() => undefined);
+    setIsAdmin(false);
+    setActiveTab('user');
+  };
   const [selectedDatabase, setSelectedDatabase] = useState('apartments');
   const [uploads, setUploads] = useState<SavedUpload[]>([]);
   const [reports, setReports] = useState<SavedReport[]>([]);
@@ -280,8 +296,18 @@ function App() {
           </button>
         </div>
 
+        {activeTab !== 'user' && isAdmin && (
+          <div className="flex justify-end mb-4">
+            <button onClick={logout} className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1">
+              <LogOut className="w-4 h-4" /> Sign out
+            </button>
+          </div>
+        )}
+
         {/* Tab Content */}
-        {activeTab === 'generate' ? (
+        {activeTab !== 'user' && !isAdmin ? (
+          isAdmin === null ? null : <AdminLogin onLogin={() => setIsAdmin(true)} />
+        ) : activeTab === 'generate' ? (
           <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-xl p-8">
             <div className="text-center mb-8">
               <h2 className="text-2xl font-bold text-gray-800 mb-2">Generate PDF Reports</h2>

@@ -437,11 +437,12 @@ function WeeklyRows({ type, week, label }: { type: string; week: string; label: 
 
 // ---------- the view ----------
 
-export default function PropertyHistory({ databaseType }: { databaseType: string }) {
+// `fixedMode` pins the view: User View shows only property history; the admin's Weekly files tab only the CSVs.
+export default function PropertyHistory({ databaseType, fixedMode }: { databaseType: string; fixedMode?: 'history' | 'weekly' }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<'history' | 'weekly'>('history');
+  const [mode, setMode] = useState<'history' | 'weekly'>(fixedMode ?? 'history');
   const [week, setWeek] = useState<string | null>(null); // null = newest synced
   const [file, setFile] = useState<string | null>(null); // null = the chosen database's base file
 
@@ -478,18 +479,23 @@ export default function PropertyHistory({ databaseType }: { databaseType: string
   return (
     <div className="bg-white rounded-2xl shadow-lg p-6">
       <div className="flex flex-wrap items-center gap-2 mb-6">
-        <button
-          onClick={() => setMode('history')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 ${mode === 'history' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-        >
-          <Clock className="w-4 h-4" /> Properties · with history
-        </button>
-        <button
-          onClick={() => setMode('weekly')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 ${mode === 'weekly' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-        >
-          <FileSpreadsheet className="w-4 h-4" /> Weekly files · one week, one CSV
-        </button>
+        {!fixedMode && (
+          <>
+            <button
+              onClick={() => setMode('history')}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 ${mode === 'history' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
+              <Clock className="w-4 h-4" /> Properties · with history
+            </button>
+            <button
+              onClick={() => setMode('weekly')}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 ${mode === 'weekly' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
+              <FileSpreadsheet className="w-4 h-4" /> Weekly files · one week, one CSV
+            </button>
+          </>
+        )}
+        {fixedMode === 'weekly' && <span className="text-sm font-semibold text-gray-700 flex items-center gap-2"><FileSpreadsheet className="w-4 h-4" /> Weekly files · one week, one CSV</span>}
         <span className="text-sm text-gray-500 ml-auto">{summary.weeks} weeks synced · latest {fmtDate(summary.latestWeek)}</span>
       </div>
 

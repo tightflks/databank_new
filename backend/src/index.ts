@@ -618,6 +618,28 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 registerAuthRoutes(app);
 
+// Nixpacks installs Chromium into /nix/store (on PATH), not at the /usr/bin path in
+// PUPPETEER_EXECUTABLE_PATH; fall back to whatever `chromium` resolves to.
+function chromiumPath(): string | undefined {
+  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  for (const name of ['chromium', 'chromium-browser', 'google-chrome']) {
+    for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+      const candidate = path.join(dir, name);
+      if (dir && fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+function launchBrowser() {
+  return puppeteer.launch({
+    headless: true,
+    executablePath: chromiumPath(),
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  });
+}
+
 const ASK_AI_PER_HOUR = Number(process.env.ASK_AI_PER_HOUR) || 30;
 
 // Configure multer for file uploads
@@ -1042,10 +1064,7 @@ app.post('/api/convert-html', requireAdmin, upload.single('file'), async (req: R
     const html = generatePropertyReportHTML(properties, FIELD_MAPPING);
 
     // Launch Puppeteer and generate PDF
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    const browser = await launchBrowser();
 
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
@@ -2384,10 +2403,7 @@ app.post('/api/uploads/:id/generate-pdf', requireAdmin, async (req: Request, res
     const filterDate = (req.body?.filterDate || req.query.filterDate) as string | undefined;
     const { html, propertyCount } = buildReportHTMLFromExcelData(excelData, filterDate, uploadRecord.database_type);
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    const browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
     const pdfBuffer = await page.pdf({
@@ -2563,10 +2579,7 @@ app.post('/api/reports/:id/regenerate-pdf', requireAdmin, async (req: Request, r
     const { html } = buildReportHTMLFromExcelData(excelData, filterDate, report.database_type);
 
     // Launch Puppeteer and generate PDF
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    const browser = await launchBrowser();
 
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });

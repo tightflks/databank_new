@@ -9,6 +9,8 @@ import { Loader2, AlertCircle, X, ExternalLink, Clock, FileSpreadsheet } from 'l
 //   Weekly files — the raw rows of any one week's CSV, any file in that zip
 //                  (APTS, APTS2, IND3…), from /api/dropbox/rows.
 
+import { fmtDate, fmtValue } from './utils/fmt';
+
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 const CSV_ROOT = '/GrooveSolutions/Databank/_archive/_csv';
 
@@ -29,22 +31,6 @@ type PropertyList = { type: string; weeks: number; firstWeek: string | null; lat
 type PropertyDetail = Property & { type: string; weeks: number; fields: string[]; current: Record<string, string>; events: Event[] };
 
 // ---------- formatting ----------
-
-function fmtDate(iso: string | null | undefined) {
-  if (!iso) return '—';
-  const d = new Date(iso.length === 10 ? iso + 'T12:00:00Z' : iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-const MONEY = /PRICE|^\$|LOAN|INCOME/;
-
-function fmtValue(field: string, v: string) {
-  if (!v) return '—';
-  const n = Number(v);
-  if (Number.isNaN(n) || /DATE|ZIP|PHONE|PARCEL|SQUARE|DISTRICT|NUMBER|LANDLOT/.test(field)) return v;
-  if (MONEY.test(field)) return '$' + Math.round(n).toLocaleString('en-US');
-  return Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-}
 
 // Web link to a synced CSV in the Dropbox UI, from its path under the account root.
 function dropboxLink(path: string) {
@@ -97,7 +83,7 @@ function trail(p: PropertyDetail, field: string): { week: string; value: string 
   return out.filter((x, i, a) => x.value && (i === 0 || x.value !== a[i - 1].value));
 }
 
-function Detail({ type, id, onClose }: { type: string; id: string; onClose: () => void }) {
+export function Detail({ type, id, onClose }: { type: string; id: string; onClose: () => void }) {
   const [p, setP] = useState<PropertyDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [all, setAll] = useState(false);

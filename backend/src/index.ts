@@ -7,7 +7,8 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
-import { registerDropboxRoutes, dropboxConfigured, latestSheet } from './dropbox';
+import { registerDropboxRoutes, dropboxConfigured, latestSheet, DATABASES } from './dropbox';
+import * as dropboxAsk from './dropbox';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -2144,6 +2145,17 @@ function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string, d
 }
 
 // AI-powered natural language search: translate a user query into structured filters
+// Columns Ask AI already covers with named filters; anything else is offered as a raw column.
+const CORE_COLUMNS = new Set([
+  'P NAME', 'P TYPE', 'PROJECT TYPE', 'MARKET AREA', 'P STREET NUMBER', 'P STREET NAME', 'P CROSS STREET NAME', 'P CITY', 'P ZIP', 'P STATE', 'COUNTY',
+  'DISTRICT', 'DISTRICT2', 'LANDLOT', 'LANDLOT2', 'LAND LOT', 'SQUARE', 'SQUARE2', 'SECTION', 'PARCEL', 'PARCEL2',
+  'UNITS COMPLETED:', '# SQ FT BUILT', '# ACRES', 'SF LAND', 'LAND SALE DATE', 'LAND SALE PRICE', 'SALE DATE', 'SALE PRICE',
+  '$ UNIT PROJECT', 'PRICE PER SF BUILDING', '$ ACRE', '$ SF', '$ UNIT LAND', 'PRICE PER ACRE', 'PRICE PER SF LAND', 'PRICE PER UNIT',
+  'TAX OWNER', 'OWNER', 'OWNER2\\ATTENTION', 'ATTENTION', 'SELLER\\FORECLOSEE', 'SELLER',
+  'INSIDER DATE', 'PREVIOUS INSIDER DATE 1', 'PREVIOUS INSIDER DATE 2', 'PREVIOUS INSIDER DATE 3', 'INSIDER SORT', 'RECID',
+  'BUILT\\COMPLETE', 'ORIGINALLY BUILT', 'YEAR BUILT', 'AKA', 'DESCRIPTION', 'INSIDER DESCRIPTION',
+]);
+
 app.post('/api/nl-search', async (req: Request, res: Response) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -2192,9 +2204,31 @@ app.post('/api/nl-search', async (req: Request, res: Response) => {
     const landLots = collectValues(['LAND LOT', 'LANDLOT'], 200);
 
     const today = new Date().toISOString().slice(0, 10);
-    const systemPrompt = `You translate natural language real-estate database queries into structured JSON filters. Today's date is ${today}.
+    const extraColumns = headers.filter((h) => h && !CORE_COLUMNS.has(h.toUpperCase()) && !/^(M\d+|\d .*|.* (\d\d|9\d)|.*PHONE.*|.*FAX|.*STREET NUMBER|.*SUITE NUMBER|.*P O BOX NUMBER|.*ZIP|.*STATE|.*REP2?)$/.test(h.toUpperCase()));
+    const systemPrompt = `You translate natural language real-estate database questions into a JSON object. Today's date is ${today}.
 
-The database contains ${databaseType} properties with these filterable fields:
+There are TWO kinds of questions. Decide first, and set "mode":
+
+(A) mode "current" — a search over this week's list of ${databaseType} properties (the default). Filter fields are below.
+
+(B) mode "history" — the question needs MORE THAN ONE WEEK of data: previous owners, who bought/sold a specific property, its sale history or timeline, what changed on a record, properties sold more than once, what appeared or dropped off the list, most active buyers/sellers over a period. For history set:
+- question: one of ${JSON.stringify(dropboxAsk.ASK_QUESTIONS)}
+    property_history = who owned / bought / sold / paid for a NAMED property, its previous owners, sale history, what changed on it (set subject)
+    entity_history   = everything a company or person has bought or sold over time (set entity). Prefer this over mode current when the user says "ever", "history", "over the years", "since <year>"
+    repeat_sales     = properties that sold / traded more than once, flipped
+    changes          = records that changed in a period; set field to a column name (e.g. "SALE PRICE", "TAX OWNER", "UNITS COMPLETED:") when the user asks about one kind of change
+    new              = properties added to the database / first published in a period
+    removed          = properties that dropped off / were removed from the list in a period
+    top_buyers       = who bought the most properties in a period (most active buyers)
+    top_sellers      = who sold the most properties in a period
+- subject: the property as the user named it (name, address or parcel number) — for property_history
+- entity: the company / person — for entity_history
+- field: column name — for changes
+- after / before: ISO dates (YYYY-MM-DD) bounding the period, when the user gives one ("since 2024" -> after 2024-01-01; "in 2023" -> both)
+- area: a city, county, zip, or neighbourhood word to narrow to, if any
+Do NOT set the mode-current filters for a history question.
+
+For mode "current", the database contains ${databaseType} properties with these filterable fields:
 
 LOCATION FILTERS (match values EXACTLY as listed, case-sensitive):
 - counties: an ARRAY of values from ${JSON.stringify(counties)}. Include ALL variants that match the user's intent.
@@ -2229,9 +2263,14 @@ OWNER / SELLER FILTERS (partial name, case-insensitive match). The OWNER of a pr
 - entity: use when the role is ambiguous or the user wants ALL activity/history for a company or person (matches owner OR seller). E.g. "history of Novare", "all properties associated with Novare" -> entity: "Novare"
 
 SPECIAL FLAGS:
-- show_top_owners: set to true when the user asks WHO owns a lot of / the most properties in an area. Combine with the appropriate location filter or search_text for the area, and DO NOT set owner/entity in that case.
+- show_top_owners: set to true when the user asks WHO owns a lot of / the most properties in an area RIGHT NOW. Combine with the appropriate location filter or search_text for the area, and DO NOT set owner/entity in that case.
 
-Respond with ONLY a JSON object containing the applicable filters (omit fields that don't apply) plus a short "explanation" field. If a location or neighborhood (e.g. "Midtown", "Buckhead") isn't in the lists, use search_text instead.`;
+ANY OTHER COLUMN (use when the question is about something not covered above — broker, lender, zoning, project type, builder, architect, management or leasing company, occupancy, rents, cap rate, loan, foreclosure, classification, anchors, description…):
+- fields: an object { "COLUMN NAME": "text" } — rows whose column CONTAINS the text (case-insensitive). E.g. "brokered by CBRE" -> {"BROKER": "CBRE"}; "financed by Wells Fargo" -> {"LENDER": "WELLS FARGO"}; "zoned M-1" -> {"ZONING": "M-1"}. Use "*" to mean the column has ANY value: "foreclosures" -> {"FORECLOSURE DATE": "*"}; "with an asking price" -> {"ASKING PRICE": "*"}.
+- ranges: an object { "COLUMN NAME": { "min": number, "max": number } } for numeric columns, e.g. "loans over $5M" -> {"PERMANENT LOAN": {"min": 5000000}}; "cap rate above 6" -> {"CAP RATE": {"min": 6}}; "more than 90% occupied" -> {"PERCENTAGE OCCUPANCY": {"min": 90}}.
+Column names available (use EXACTLY): ${JSON.stringify(extraColumns)}
+
+Respond with ONLY a JSON object: "mode", the applicable fields (omit ones that don't apply) and a short "explanation" of how you read the question. If a location or neighborhood (e.g. "Midtown", "Buckhead") isn't in the lists, use search_text (mode current) or area (mode history) instead.`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -2242,7 +2281,7 @@ Respond with ONLY a JSON object containing the applicable filters (omit fields t
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 500,
+        max_tokens: 800,
         system: systemPrompt,
         messages: [{ role: 'user', content: query.trim() }]
       })
@@ -2266,6 +2305,21 @@ Respond with ONLY a JSON object containing the applicable filters (omit fields t
       filters = JSON.parse(jsonMatch[0]);
     } catch {
       return res.status(422).json({ error: 'Could not interpret the query. Try rephrasing.' });
+    }
+
+    if (filters.mode === 'history') {
+      if (!dropboxConfigured()) {
+        return res.status(503).json({ error: 'History questions need the Dropbox archive (Dropbox is not configured)' });
+      }
+      const type = DATABASES.find((d) => d.id === databaseType)?.type ?? 'APTS';
+      const question = dropboxAsk.ASK_QUESTIONS.includes(filters.question) ? filters.question : 'property_history';
+      const s = (v: unknown) => (typeof v === 'string' ? v : '');
+      const answer = await dropboxAsk.ask({
+        type, question,
+        subject: s(filters.subject), entity: s(filters.entity), field: s(filters.field), area: s(filters.area),
+        after: s(filters.after), before: s(filters.before),
+      });
+      return res.json({ filters, history: answer });
     }
 
     res.json({ filters });

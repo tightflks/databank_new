@@ -4,6 +4,7 @@ import axios from 'axios';
 import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut } from 'lucide-react';
 import UserDashboard from './UserDashboard';
 import DatabaseStatus from './DatabaseStatus';
+import PropertyHistory from './PropertyHistory';
 import AdminLogin from './AdminLogin';
 
 axios.defaults.withCredentials = true;
@@ -52,7 +53,7 @@ const databaseLabel = (value?: string) => {
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases'>(ADMIN_ROUTE ? 'generate' : 'user');
+  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -252,7 +253,7 @@ function App() {
         </div>
 
         {/* Navigation Tabs (admin only) */}
-        {ADMIN_ROUTE && <div className="grid grid-cols-3 gap-4 mb-6">
+        {ADMIN_ROUTE && <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <button
             onClick={() => setActiveTab('generate')}
             className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
@@ -285,6 +286,17 @@ function App() {
           >
             <FileArchive className="w-5 h-5" />
             Databases
+          </button>
+          <button
+            onClick={() => setActiveTab('weekly')}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'weekly'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/80'
+            }`}
+          >
+            <Calendar className="w-5 h-5" />
+            Weekly files
           </button>
         </div>}
 
@@ -528,6 +540,25 @@ function App() {
           <UserDashboard />
         ) : activeTab === 'databases' ? (
           <DatabaseStatus />
+        ) : activeTab === 'weekly' ? (
+          <div className="space-y-4">
+            <div className="flex justify-center">
+              <div className="inline-flex flex-wrap justify-center rounded-xl bg-white shadow-md p-1 gap-1">
+                {DATABASE_OPTIONS.map(option => (
+                  <button
+                    key={option.value}
+                    onClick={() => setSelectedDatabase(option.value)}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                      selectedDatabase === option.value ? 'bg-blue-600 text-white shadow-md' : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <PropertyHistory databaseType={selectedDatabase} fixedMode="weekly" />
+          </div>
         ) : (
           <div className="space-y-6">
             {/* Database Filter */}

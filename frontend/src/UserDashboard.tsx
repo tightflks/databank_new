@@ -1703,7 +1703,7 @@ function UserDashboard() {
             </div>
           </div>
         ) : activeView === 'history' ? (
-          <PropertyHistory databaseType={databaseType} />
+          <PropertyHistory databaseType={databaseType} fixedMode="history" />
         ) : null}
 
         {/* Full Property Report Modal */}

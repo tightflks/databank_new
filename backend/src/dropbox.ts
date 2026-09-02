@@ -131,7 +131,7 @@ async function summary() {
 const FILE = /^[A-Z0-9]{1,16}$/;
 const WEEK = /^\d{4}-\d{2}-\d{2}$/;
 
-type Parsed = { at: number; columns: string[]; rows: string[][] };
+type Parsed = { at: number; rev: string; columns: string[]; rows: string[][] };
 const rowsCache = new Map<string, Parsed>();
 
 async function loadRows(type: string, week: string): Promise<Parsed> {
@@ -140,6 +140,9 @@ async function loadRows(type: string, week: string): Promise<Parsed> {
   if (hit && Date.now() - hit.at < TTL_MS) return hit;
   const res = await download(`${CSV_ROOT}/${week}/${type}.csv`);
   if (!res) throw new Error(`${type}.csv for ${week} is not in Dropbox`);
+  // Dropbox's file revision: the sync rewrites a week's CSV in place (e.g. date repairs), and the
+  // uploads table must see that as a new version.
+  const meta = JSON.parse(res.headers.get('Dropbox-API-Result') ?? '{}') as { rev?: string };
   const all = parseCsv(await res.text());
   const header = (all[0] ?? []).map((h) => h.trim());
   const body = all
@@ -150,6 +153,7 @@ async function loadRows(type: string, week: string): Promise<Parsed> {
   const used = header.map((_, i) => body.some((r) => r[i]));
   const parsed = {
     at: Date.now(),
+    rev: meta.rev ?? '',
     columns: header.filter((_, i) => used[i]),
     rows: body.map((r) => r.filter((_, i) => used[i])),
   };
@@ -176,7 +180,7 @@ export function excelCell(v: string): string | number | null {
   return v;
 }
 
-export type LatestSheet = { week: string; type: string; file: string; data: (string | number | null)[][] };
+export type LatestSheet = { week: string; rev: string; type: string; file: string; data: (string | number | null)[][] };
 
 export async function latestSheet(databaseId: string): Promise<LatestSheet | null> {
   const db = DATABASES.find((d) => d.id === databaseId);
@@ -184,9 +188,10 @@ export async function latestSheet(databaseId: string): Promise<LatestSheet | nul
   const s = (await summary()) as { databases: { id: string; latestWeek: string | null }[] };
   const week = s.databases.find((d) => d.id === databaseId)?.latestWeek;
   if (!week) return null;
-  const { columns, rows } = await loadRows(db.type, week);
+  const { rev, columns, rows } = await loadRows(db.type, week);
   return {
     week,
+    rev,
     type: db.type,
     file: `${db.type}.csv`,
     data: [columns, ...rows.map((r) => r.map(excelCell))],

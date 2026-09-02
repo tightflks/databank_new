@@ -5,6 +5,11 @@ import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
+import { titleCase } from './utils/fmt';
+
+type SortKey = 'propertyName' | 'city' | 'county' | 'units' | 'salePrice' | 'pricePerUnit' | 'insiderDate' | 'lastInsiderDate';
+const NUMERIC_SORT: SortKey[] = ['units', 'salePrice', 'pricePerUnit'];
+const DATE_SORT: SortKey[] = ['insiderDate', 'lastInsiderDate'];
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
@@ -62,6 +67,7 @@ function UserDashboard() {
   // Property search states
   const [properties, setProperties] = useState<Property[]>([]);
   const [filteredProperties, setFilteredProperties] = useState<Property[]>([]);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' } | null>(null);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [propertySearchText, setPropertySearchText] = useState('');
@@ -226,7 +232,7 @@ function UserDashboard() {
 
   useEffect(() => {
     applyPropertyFilters();
-  }, [propertySearchText, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, properties]);
+  }, [sort, propertySearchText, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, properties]);
 
   const fetchReports = async () => {
     setLoading(true);
@@ -388,7 +394,11 @@ function UserDashboard() {
     // Text search across ALL fields in the property
     if (propertySearchText.trim()) {
       const tokens = propertySearchText.toLowerCase().split(/\s+/).filter(Boolean);
+      // Parcel numbers are typed with or without spacing (111012003 vs 111 012 003)
+      const digits = propertySearchText.replace(/\D/g, '');
+      const asParcel = digits.length >= 6 && /^[\d\s-]+$/.test(propertySearchText.trim());
       filtered = filtered.filter(p => {
+        if (asParcel && String(p.parcel || '').replace(/\D/g, '').includes(digits)) return true;
         // Search across all string values in the property object
         const allValues = Object.values(p)
           .filter(v => typeof v === 'string')
@@ -504,8 +514,24 @@ function UserDashboard() {
       });
     }
 
+    if (sort) {
+      const { key, dir } = sort;
+      const num = (p: Property) => parseNum(p[key]);
+      const time = (p: Property) => new Date(p[key] || '').getTime() || 0;
+      const sgn = dir === 'asc' ? 1 : -1;
+      filtered = [...filtered].sort((a, b) => {
+        if (NUMERIC_SORT.includes(key)) return sgn * (num(a) - num(b));
+        if (DATE_SORT.includes(key)) return sgn * (time(a) - time(b));
+        return sgn * String(a[key] || '').localeCompare(String(b[key] || ''));
+      });
+    }
     setFilteredProperties(filtered);
   };
+
+  const toggleSort = (key: SortKey) =>
+    setSort(s => (s?.key === key ? (s.dir === 'desc' ? { key, dir: 'asc' } : null) : { key, dir: NUMERIC_SORT.includes(key) || DATE_SORT.includes(key) ? 'desc' : 'asc' }));
+
+  const sortMark = (key: SortKey) => (sort?.key === key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
 
   const clearPropertyFilters = () => {
     setPropertySearchText('');
@@ -682,14 +708,14 @@ function UserDashboard() {
       {
         title: 'Property Profile',
         fields: [
-          { label: 'Property Name', value: get('P NAME') },
-          { label: 'Address', value: `${get('P STREET NUMBER')} ${get('P STREET NAME')}`.trim() },
-          { label: 'City', value: get('P CITY') },
-          { label: 'County', value: get('COUNTY') },
+          { label: 'Property Name', value: titleCase(get('P NAME')) },
+          { label: 'Address', value: titleCase(`${get('P STREET NUMBER')} ${get('P STREET NAME')}`.trim()) },
+          { label: 'City', value: titleCase(get('P CITY')) },
+          { label: 'County', value: titleCase(get('COUNTY')) },
           { label: 'Market Area', value: get('MARKET AREA') },
           { label: 'Zip', value: get('P ZIP') },
           { label: 'District', value: get('DISTRICT2') },
-          { label: 'Cross Road', value: get('P CROSS STREET NAME') },
+          { label: 'Cross Road', value: titleCase(get('P CROSS STREET NAME')) },
           { label: 'Parcel', value: get('PARCEL') },
         ],
       },
@@ -700,16 +726,16 @@ function UserDashboard() {
           { label: 'Previous Insider Date 1', value: get('PREVIOUS INSIDER DATE 1') },
           { label: 'Previous Insider Date 2', value: get('PREVIOUS INSIDER DATE 2') },
           { label: 'Previous Insider Date 3', value: get('PREVIOUS INSIDER DATE 3') },
-          { label: 'Insider Description', value: getAny('P TYPE', 'PROJECT TYPE') },
+          { label: 'Insider Description', value: titleCase(getAny('P TYPE', 'PROJECT TYPE')) },
           { label: isIndustrial ? 'Sq Ft / $ SF' : 'Units / $ Unit', value: [formatUnits(getAny('UNITS COMPLETED', '# SQ FT BUILT')), formatPerUnit(property.pricePerUnit) || formatPerUnit(getAny('$ UNIT PROJECT', 'PRICE PER SF BUILDING'))].filter(Boolean).join(' / ') },
-          { label: 'Tax Owner', value: get('TAX OWNER') },
-          { label: 'Owner (Buyer)', value: get('OWNER') },
-          { label: 'Seller', value: getAny('SELLER\\FORECLOSEE', 'SELLER') },
+          { label: 'Tax Owner', value: titleCase(get('TAX OWNER')) },
+          { label: 'Owner (Buyer)', value: titleCase(get('OWNER')) },
+          { label: 'Seller', value: titleCase(getAny('SELLER\\FORECLOSEE', 'SELLER')) },
           { label: 'Onsite Telephone', value: get('ONSITE PHONE') },
           { label: 'Acres / $ Per Acre', value: [get('# ACRES'), formatCurrency(getAny('$ ACRE', 'PRICE PER ACRE'))].filter(Boolean).join(' / ') },
           ...(isIndustrial ? [] : [{ label: 'Square Ft', value: formatUnits(get('HEATED SF')) }]),
           { label: 'Loan Amount', value: formatCurrency(getAny('$ LOAN', 'PERMANENT LOAN')) },
-          { label: 'Attorney Name', value: get('ATTORNEY') },
+          { label: 'Attorney Name', value: titleCase(get('ATTORNEY')) },
           { label: 'Attorney Telephone', value: get('ATTORNEY PHONE') },
         ],
       },
@@ -1588,14 +1614,25 @@ function UserDashboard() {
               <table className="w-full">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Property</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">City</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">County</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{unitLabel}</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Price</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{perUnitLabel}</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Insider Date</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Previous Insider Date</th>
+                    {([
+                      ['propertyName', 'Property'],
+                      ['city', 'City'],
+                      ['county', 'County'],
+                      ['units', unitLabel],
+                      ['salePrice', 'Price'],
+                      ['pricePerUnit', perUnitLabel],
+                      ['insiderDate', 'Insider Date'],
+                      ['lastInsiderDate', 'Previous Insider Date'],
+                    ] as [SortKey, string][]).map(([key, label]) => (
+                      <th
+                        key={key}
+                        onClick={() => toggleSort(key)}
+                        title="Click to sort"
+                        className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none hover:text-gray-900 ${sort?.key === key ? 'text-indigo-700' : 'text-gray-600'}`}
+                      >
+                        {label}{sortMark(key)}
+                      </th>
+                    ))}
                     <th className="px-4 py-3"></th>
                   </tr>
                 </thead>
@@ -1603,9 +1640,9 @@ function UserDashboard() {
                   {filteredProperties.map((property, idx) => (
                     <>
                       <tr key={idx} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedProperty(property)}>
-                        <td className="px-4 py-3 text-sm font-medium text-gray-900">{property.propertyName}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{property.city}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{property.county}</td>
+                        <td className="px-4 py-3 text-sm font-medium text-gray-900">{titleCase(property.propertyName)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{titleCase(property.city)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{titleCase(property.county)}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{formatUnits(property.units)}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{formatCurrency(property.salePrice)}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{formatPerUnit(property.pricePerUnit)}</td>
@@ -1623,12 +1660,12 @@ function UserDashboard() {
                         <tr>
                           <td colSpan={9} className="px-4 py-4 bg-gray-50">
                             <div className="grid grid-cols-2 gap-4 text-sm">
-                              <div><span className="font-semibold">Address:</span> {property.address}</div>
+                              <div><span className="font-semibold">Address:</span> {titleCase(property.address)}</div>
                               <div><span className="font-semibold">Zip:</span> {property.zip}</div>
                               <div><span className="font-semibold">Market Area:</span> {property.marketArea}</div>
                               <div><span className="font-semibold">District:</span> {property.district}</div>
                               <div><span className="font-semibold">Parcel:</span> {property.parcel}</div>
-                              <div><span className="font-semibold">Tax Owner:</span> {property.taxOwner}</div>
+                              <div><span className="font-semibold">Tax Owner:</span> {titleCase(property.taxOwner)}</div>
                               <div>
                                 <span className="font-semibold">Owner (Buyer):</span>{' '}
                                 {property.owner ? (
@@ -1637,7 +1674,7 @@ function UserDashboard() {
                                     title="View all properties associated with this owner"
                                     onClick={(e) => { e.stopPropagation(); setEntityFilter(property.owner); }}
                                   >
-                                    {property.owner}
+                                    {titleCase(property.owner)}
                                   </button>
                                 ) : '—'}
                               </div>
@@ -1649,7 +1686,7 @@ function UserDashboard() {
                                     title="View all properties associated with this seller"
                                     onClick={(e) => { e.stopPropagation(); setEntityFilter(property.seller); }}
                                   >
-                                    {property.seller}
+                                    {titleCase(property.seller)}
                                   </button>
                                 ) : '—'}
                               </div>

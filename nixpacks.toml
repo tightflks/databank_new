@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "chromium", "python3", "gcc", "gnumake"]
+nixPkgs = ["nodejs_20", "chromium", "python3", "gcc", "gnumake", "fontconfig", "liberation_ttf", "dejavu_fonts"]
 
 [phases.install]
 cmds = ["npm ci"]

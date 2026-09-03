@@ -12,6 +12,7 @@ import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 import { registerPhotoRoutes, photosConfigured } from './photos';
+import { registerStatsRoutes } from './stats';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -327,6 +328,21 @@ function truncateText(text: string, maxWidth: number, font: any, fontSize: numbe
 }
 
 // HTML Template Generator for Property Reports
+// Railway's Nix Chromium ships without system fonts, so the report embeds its own.
+let fontCssCache: string | null = null;
+function embeddedFontCss(): string {
+  if (fontCssCache !== null) return fontCssCache;
+  const dir = path.join(__dirname, '../fonts');
+  const face = (file: string, weight: number) => {
+    const p = path.join(dir, file);
+    if (!fs.existsSync(p)) return '';
+    const b64 = fs.readFileSync(p).toString('base64');
+    return `@font-face { font-family: 'Inter'; font-weight: ${weight}; src: url(data:font/ttf;base64,${b64}) format('truetype'); }`;
+  };
+  fontCssCache = face('LiberationSans-Regular.ttf', 400) + face('LiberationSans-Bold.ttf', 700);
+  return fontCssCache;
+}
+
 function generatePropertyReportHTML(properties: any[], fieldMapping: any): string {
   const formatCurrency = (value: string) => {
     if (!value) return '-';
@@ -394,6 +410,7 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Databank Property Reports</title>
       <style>
+        ${embeddedFontCss()}
         * {
           margin: 0;
           padding: 0;
@@ -401,7 +418,7 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
         }
 
         body {
-          font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', 'Arial', sans-serif;
+          font-family: 'Inter', 'Liberation Sans', 'Segoe UI', 'Helvetica Neue', 'Arial', sans-serif;
           font-size: 11pt;
           line-height: 1.6;
           color: #1e293b;
@@ -2689,6 +2706,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 // Property Search over the Dropbox archive (weekly CSVs + per-property history)
 registerDropboxRoutes(app);
 registerPhotoRoutes(app, db);
+registerStatsRoutes(app, db);
 
 // Serve the built frontend (production)
 const frontendDist = path.join(__dirname, '../../frontend/dist');

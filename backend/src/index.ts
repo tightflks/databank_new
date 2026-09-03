@@ -10,6 +10,7 @@ import fs from 'fs';
 import { registerDropboxRoutes, dropboxConfigured, latestSheet, DATABASES } from './dropbox';
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
+import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -675,7 +676,10 @@ app.post('/api/feedback', rateLimit(20, 'Feedback limit reached ({n} an hour)'),
   if (text.length > 4000) return res.status(400).json({ error: 'message too long (4,000 characters max)' });
   const clip = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : null);
   const info = insertFeedbackStmt.run(text, clip(contact, 200), clip(page, 200), clip(database_type, 40));
-  res.json({ ok: true, id: Number(info.lastInsertRowid) });
+  const id = Number(info.lastInsertRowid);
+  res.json({ ok: true, id });
+  sendFeedbackMail({ id, message: text, contact: clip(contact, 200), page: clip(page, 200), databaseType: clip(database_type, 40) })
+    .catch((e: unknown) => console.error('Feedback email failed:', e instanceof Error ? e.message : e));
 });
 
 app.get('/api/feedback', requireAdmin, (_req: Request, res: Response) => {
@@ -2706,4 +2710,9 @@ app.listen(port, () => {
   } else {
     console.log('Dropbox not configured — databases stay on manual uploads');
   }
+  console.log(
+    mailConfigured()
+      ? `Feedback emails go to ${FEEDBACK_TO.join(', ')}`
+      : 'SMTP_URL not set — feedback is stored on /admin only, no emails'
+  );
 });

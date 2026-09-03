@@ -6,6 +6,7 @@ import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
 import { titleCase, primaryName, aliasNames } from './utils/fmt';
+import { tokenMatches, wordsOf } from './utils/fuzzy';
 import { parseComments } from './utils/comments';
 
 const PAGE_SIZE = 100;
@@ -424,7 +425,14 @@ function UserDashboard() {
           .filter(v => typeof v === 'string')
           .join(' ')
           .toLowerCase();
-        return tokens.every(token => allValues.includes(token));
+        if (tokens.every(token => allValues.includes(token))) return true;
+        const words = wordsOf(
+          [p.propertyName, p.city, p.county, p.owner, p.seller, p.address, p.streetName, p.marketArea]
+            .map(v => String(v || ''))
+            .join(' ')
+            .toLowerCase()
+        );
+        return tokens.every(token => tokenMatches(token, allValues, words));
       });
     }
     

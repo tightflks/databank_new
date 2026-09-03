@@ -5,6 +5,7 @@ import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText,
 import FeedbackWidget from './FeedbackWidget';
 import FeedbackList from './FeedbackList';
 import UserDashboard from './UserDashboard';
+import Home from './Home';
 import DatabaseStatus from './DatabaseStatus';
 import PropertyHistory from './PropertyHistory';
 import AdminLogin from './AdminLogin';
@@ -58,6 +59,13 @@ function App() {
   const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [publicView, setPublicView] = useState<'home' | 'search'>(window.location.hash === '#search' ? 'search' : 'home');
+
+  const showPublic = (v: 'home' | 'search') => {
+    setPublicView(v);
+    window.history.replaceState(null, '', v === 'search' ? '#search' : '/');
+    window.scrollTo({ top: 0 });
+  };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -362,7 +370,24 @@ function App() {
 
         {/* Tab Content */}
         {!ADMIN_ROUTE ? (
-          <UserDashboard />
+          <>
+            <div className="flex justify-center mb-6">
+              <div className="inline-flex rounded-xl bg-white shadow-md p-1 gap-1">
+                {(['home', 'search'] as const).map(v => (
+                  <button
+                    key={v}
+                    onClick={() => showPublic(v)}
+                    className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${
+                      publicView === v ? 'bg-[#0b1f5c] text-white shadow' : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {v === 'home' ? 'Home' : 'Search'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : <UserDashboard />}
+          </>
         ) : !isAdmin ? (
           isAdmin === null ? null : <AdminLogin onLogin={() => setIsAdmin(true)} />
         ) : activeTab === 'generate' ? (

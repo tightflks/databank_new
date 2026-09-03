@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare } from 'lucide-react';
+import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare, Camera } from 'lucide-react';
 import FeedbackWidget from './FeedbackWidget';
 import FeedbackList from './FeedbackList';
+import PhotoReview from './PhotoReview';
 import UserDashboard from './UserDashboard';
 import Home from './Home';
 import DatabaseStatus from './DatabaseStatus';
@@ -56,7 +57,7 @@ const databaseLabel = (value?: string) => {
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback'>(ADMIN_ROUTE ? 'generate' : 'user');
+  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback' | 'photos'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [publicView, setPublicView] = useState<'home' | 'search'>(window.location.hash === '#search' ? 'search' : 'home');
@@ -310,7 +311,7 @@ function App() {
         )}
 
         {/* Navigation Tabs (admin only) */}
-        {ADMIN_ROUTE && <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        {ADMIN_ROUTE && <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
           <button
             onClick={() => setActiveTab('generate')}
             className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
@@ -365,6 +366,17 @@ function App() {
           >
             <MessageSquare className="w-5 h-5" />
             Feedback
+          </button>
+          <button
+            onClick={() => setActiveTab('photos')}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'photos'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/80'
+            }`}
+          >
+            <Camera className="w-5 h-5" />
+            Photos
           </button>
         </div>}
 
@@ -635,6 +647,8 @@ function App() {
           </div>
         ) : activeTab === 'feedback' ? (
           <FeedbackList />
+        ) : activeTab === 'photos' ? (
+          <PhotoReview />
         ) : (
           <div className="space-y-6">
             {/* Database Filter */}

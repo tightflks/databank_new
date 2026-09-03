@@ -11,6 +11,7 @@ import { registerDropboxRoutes, dropboxConfigured, latestSheet, DATABASES } from
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
+import { registerPhotoRoutes, photosConfigured } from './photos';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -2687,6 +2688,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 // Property Search over the Dropbox archive (weekly CSVs + per-property history)
 registerDropboxRoutes(app);
+registerPhotoRoutes(app, db);
 
 // Serve the built frontend (production)
 const frontendDist = path.join(__dirname, '../../frontend/dist');
@@ -2715,4 +2717,5 @@ app.listen(port, () => {
       ? `Feedback emails go to ${FEEDBACK_TO.join(', ')}`
       : 'SMTP_URL not set — feedback is stored on /admin only, no emails'
   );
+  console.log(photosConfigured() ? 'Street View photos enabled (admin approval required)' : 'GOOGLE_MAPS_API_KEY not set — property photos off');
 });

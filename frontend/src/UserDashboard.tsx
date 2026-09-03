@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
+import PropertyPhoto from './PropertyPhoto';
 import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
@@ -10,6 +11,7 @@ import { tokenMatches, wordsOf } from './utils/fuzzy';
 import { parseComments } from './utils/comments';
 
 const PAGE_SIZE = 100;
+const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
 
 // Re-filtering 2,600 rows on every keystroke made typing lag; filter on the settled value instead.
 function useDebounced<T>(value: T, ms: number): T {
@@ -1894,6 +1896,14 @@ function UserDashboard() {
 
               {/* Report Sections */}
               <div className="p-8 space-y-8">
+                <PropertyPhoto
+                  name={primaryName(selectedProperty.propertyName)}
+                  address={selectedProperty.address.trim()}
+                  city={selectedProperty.city}
+                  zip={selectedProperty.zip}
+                  databaseType={databaseType}
+                  admin={ADMIN_ROUTE}
+                />
                 {buildReportSections(selectedProperty).map((section) => (
                   <div key={section.title}>
                     <h3 className="text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4">

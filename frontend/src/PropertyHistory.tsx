@@ -234,9 +234,9 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
   );
 }
 
-function Properties({ type, label }: { type: string; label: string }) {
-  const [q, setQ] = useState('');
-  const [term, setTerm] = useState('');
+function Properties({ type, label, initialQuery = '' }: { type: string; label: string; initialQuery?: string }) {
+  const [q, setQ] = useState(initialQuery);
+  const [term, setTerm] = useState(initialQuery);
   const [page, setPage] = useState(0);
   const [removed, setRemoved] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -438,7 +438,7 @@ function WeeklyRows({ type, week, label }: { type: string; week: string; label: 
 // ---------- the view ----------
 
 // `fixedMode` pins the view: User View shows only property history; the admin's Weekly files tab only the CSVs.
-export default function PropertyHistory({ databaseType, fixedMode }: { databaseType: string; fixedMode?: 'history' | 'weekly' }) {
+export default function PropertyHistory({ databaseType, fixedMode, initialQuery }: { databaseType: string; fixedMode?: 'history' | 'weekly'; initialQuery?: string }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -500,7 +500,7 @@ export default function PropertyHistory({ databaseType, fixedMode }: { databaseT
       </div>
 
       {mode === 'history' ? (
-        <Properties key={db.type} type={db.type} label={db.label} />
+        <Properties key={`${db.type}/${initialQuery ?? ''}`} type={db.type} label={db.label} initialQuery={initialQuery} />
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2 mb-4 text-sm text-gray-600">

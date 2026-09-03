@@ -1,15 +1,28 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History } from 'lucide-react';
+import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
-import { titleCase } from './utils/fmt';
+import { titleCase, primaryName, aliasNames } from './utils/fmt';
+import { parseComments } from './utils/comments';
 
-type SortKey = 'propertyName' | 'city' | 'county' | 'units' | 'salePrice' | 'pricePerUnit' | 'insiderDate' | 'lastInsiderDate';
+const PAGE_SIZE = 100;
+
+// Re-filtering 2,600 rows on every keystroke made typing lag; filter on the settled value instead.
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+type SortKey = 'propertyName' | 'city' | 'county' | 'units' | 'salePrice' | 'pricePerUnit' | 'saleDate' | 'insiderDate';
 const NUMERIC_SORT: SortKey[] = ['units', 'salePrice', 'pricePerUnit'];
-const DATE_SORT: SortKey[] = ['insiderDate', 'lastInsiderDate'];
+const DATE_SORT: SortKey[] = ['saleDate', 'insiderDate'];
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
@@ -70,7 +83,11 @@ function UserDashboard() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' } | null>(null);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [visibleRows, setVisibleRows] = useState(PAGE_SIZE);
+  const [exporting, setExporting] = useState(false);
   const [propertySearchText, setPropertySearchText] = useState('');
+  const searchQuery = useDebounced(propertySearchText, 250);
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedCounties, setSelectedCounties] = useState<string[]>([]);
   const [countyDropdownOpen, setCountyDropdownOpen] = useState(false);
@@ -100,6 +117,7 @@ function UserDashboard() {
   const [latestUploadName, setLatestUploadName] = useState('');
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
+  const [historyQuery, setHistoryQuery] = useState('');
 
   // AI natural language search states
   const [aiQuery, setAiQuery] = useState('');
@@ -232,7 +250,9 @@ function UserDashboard() {
 
   useEffect(() => {
     applyPropertyFilters();
-  }, [sort, propertySearchText, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, properties]);
+    setVisibleRows(PAGE_SIZE);
+    setExpandedRow(null);
+  }, [sort, searchQuery, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, properties]);
 
   const fetchReports = async () => {
     setLoading(true);
@@ -392,11 +412,11 @@ function UserDashboard() {
     let filtered = [...properties];
     
     // Text search across ALL fields in the property
-    if (propertySearchText.trim()) {
-      const tokens = propertySearchText.toLowerCase().split(/\s+/).filter(Boolean);
+    if (searchQuery.trim()) {
+      const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
       // Parcel numbers are typed with or without spacing (111012003 vs 111 012 003)
-      const digits = propertySearchText.replace(/\D/g, '');
-      const asParcel = digits.length >= 6 && /^[\d\s-]+$/.test(propertySearchText.trim());
+      const digits = searchQuery.replace(/\D/g, '');
+      const asParcel = digits.length >= 6 && /^[\d\s-]+$/.test(searchQuery.trim());
       filtered = filtered.filter(p => {
         if (asParcel && String(p.parcel || '').replace(/\D/g, '').includes(digits)) return true;
         // Search across all string values in the property object
@@ -532,6 +552,96 @@ function UserDashboard() {
     setSort(s => (s?.key === key ? (s.dir === 'desc' ? { key, dir: 'asc' } : null) : { key, dir: NUMERIC_SORT.includes(key) || DATE_SORT.includes(key) ? 'desc' : 'asc' }));
 
   const sortMark = (key: SortKey) => (sort?.key === key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
+
+  const activeFilterCount = [
+    selectedCity, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller,
+    ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice,
+    minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt,
+    saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore,
+  ].filter(Boolean).length + selectedCounties.length + Object.keys(aiFields).length + Object.keys(aiRanges).length;
+
+  const exportExcel = async () => {
+    if (exporting || filteredProperties.length === 0) return;
+    setExporting(true);
+    try {
+      const columns = [
+        { key: 'propertyName', label: 'Property' },
+        { key: 'formerNames', label: 'Former names' },
+        { key: 'address', label: 'Address' },
+        { key: 'city', label: 'City' },
+        { key: 'county', label: 'County' },
+        { key: 'zip', label: 'ZIP' },
+        { key: 'marketArea', label: 'Market Area' },
+        { key: 'units', label: unitLabel },
+        { key: 'yearBuilt', label: 'Year Built' },
+        { key: 'acres', label: 'Acres' },
+        { key: 'salePrice', label: 'Sale Price' },
+        { key: 'pricePerUnit', label: perUnitLabel },
+        { key: 'saleDate', label: 'Sale Date' },
+        { key: 'owner', label: 'Owner / Buyer' },
+        { key: 'seller', label: 'Seller' },
+        { key: 'loanAmount', label: 'Loan' },
+        { key: 'parcel', label: 'Parcel' },
+        { key: 'insiderDate', label: 'Insider Date' },
+        { key: 'lastInsiderDate', label: 'Previous Insider Date' },
+        { key: 'comments', label: 'Comments' },
+      ];
+      const rows = filteredProperties.map((p) => ({
+        propertyName: primaryName(p.propertyName),
+        formerNames: aliasNames(p.propertyName).replace(/^formerly /, ''),
+        address: titleCase(p.address),
+        city: titleCase(p.city),
+        county: titleCase(p.county),
+        zip: p.zip,
+        marketArea: p.marketArea,
+        units: p.units,
+        yearBuilt: p.yearBuilt,
+        acres: p.acres,
+        salePrice: p.salePrice,
+        pricePerUnit: p.pricePerUnit,
+        saleDate: p.saleDate,
+        owner: p.owner,
+        seller: p.seller,
+        loanAmount: p.loanAmount,
+        parcel: p.parcel,
+        insiderDate: p.insiderDate,
+        lastInsiderDate: p.lastInsiderDate,
+        comments: getFullComments(p),
+      }));
+      const filename = `databank-${databaseType}-${new Date().toISOString().slice(0, 10)}`;
+      const res = await axios.post(`${API_URL}/api/export/xlsx`, { columns, rows, filename }, { responseType: 'blob', withCredentials: true });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${filename}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed:', err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const newThisWeek = useMemo(() => {
+    const counts = new Map<string, number>();
+    const today = Date.now();
+    for (const p of properties) {
+      const t = new Date(p.insiderDate).getTime();
+      if (p.insiderDate && !isNaN(t) && t <= today) counts.set(p.insiderDate, (counts.get(p.insiderDate) || 0) + 1);
+    }
+    let best: { date: string; count: number } | null = null;
+    for (const [date, count] of counts) {
+      if (!best || new Date(date).getTime() > new Date(best.date).getTime()) best = { date, count };
+    }
+    return best;
+  }, [properties]);
+
+  const showHistoryFor = (p: Property) => {
+    setHistoryQuery(primaryName(p.propertyName) || p.address);
+    setActiveView('history');
+  };
 
   const clearPropertyFilters = () => {
     setPropertySearchText('');
@@ -771,21 +881,10 @@ function UserDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-      <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Property Search</h1>
-          <p className="text-lg text-gray-600">
-            {activeView === 'search' && 'Search current and historical property records across all insider dates'}
-            {activeView === 'history' && 'One record per property across every weekly file since 2022 — owners, sales and changes'}
-            {activeView === 'dashboard' && 'Market insights and activity from the latest upload'}
-            {activeView === 'reports' && 'Browse and access saved property reports'}
-          </p>
-        </div>
-
+    <div>
+      <div className="flex flex-col">
         {/* Database Type Selector */}
-        <div className="flex justify-center mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
           <div className="inline-flex flex-wrap justify-center rounded-xl bg-white shadow-md p-1 gap-1">
             {DATABASE_OPTIONS.map((option) => (
               <button
@@ -801,13 +900,23 @@ function UserDashboard() {
               </button>
             ))}
           </div>
+          {newThisWeek && (
+            <button
+              onClick={() => { setActiveView('search'); clearPropertyFilters(); setSelectedDate(newThisWeek.date); }}
+              title="Show only the properties in the latest Insider Report"
+              className="flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow-md text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="font-semibold text-gray-900">{newThisWeek.count.toLocaleString()} new</span> in the {newThisWeek.date} Insider Report
+            </button>
+          )}
         </div>
 
         {/* View Toggle */}
-        <div className="flex gap-4 mb-6">
+        <div className="flex flex-wrap gap-3 mb-5">
           <button
             onClick={() => setActiveView('search')}
-            className={`flex-1 py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+            className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'search'
                 ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
                 : 'bg-white text-gray-600 hover:bg-gray-50'
@@ -818,7 +927,7 @@ function UserDashboard() {
           </button>
           <button
             onClick={() => setActiveView('history')}
-            className={`flex-1 py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+            className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'history'
                 ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
                 : 'bg-white text-gray-600 hover:bg-gray-50'
@@ -829,7 +938,7 @@ function UserDashboard() {
           </button>
           <button
             onClick={() => setActiveView('dashboard')}
-            className={`flex-1 py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+            className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'dashboard'
                 ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
                 : 'bg-white text-gray-600 hover:bg-gray-50'
@@ -840,7 +949,7 @@ function UserDashboard() {
           </button>
           <button
             onClick={() => setActiveView('reports')}
-            className={`flex-1 py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+            className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'reports'
                 ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
                 : 'bg-white text-gray-600 hover:bg-gray-50'
@@ -1308,33 +1417,28 @@ function UserDashboard() {
         </div>
           </>
         ) : activeView === 'search' ? (
-          <div className="bg-white rounded-2xl shadow-xl p-6">
-            <div className="mb-6">
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Property Database Search</h2>
-              <p className="text-gray-600">Searching the latest uploaded data with {properties.length.toLocaleString()} properties</p>
-            </div>
-
+          <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6">
             {/* AI Natural Language Search */}
-            <div className="mb-6 p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-bold text-gray-800">Ask AI</h3>
-                <span className="text-xs text-gray-500">this week's list, or the whole archive: "who owned 1000 Belmont before?", "everything Novare sold", "sales under $150k per unit"</span>
+            <div className="mb-5 p-4 sm:p-5 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl">
+              <div className="flex items-baseline gap-2 mb-3">
+                <Sparkles className="w-6 h-6 text-indigo-600 self-center" />
+                <h2 className="text-xl font-bold text-gray-800 whitespace-nowrap">Ask AI</h2>
+                <span className="text-sm text-gray-500">Type a question about this week's list or the whole archive</span>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
                   value={aiQuery}
                   onChange={(e) => setAiQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleAiSearch()}
-                  placeholder="Describe what you're looking for in plain English..."
-                  className="flex-1 px-4 py-3 bg-white border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder='e.g. "who owned 1000 Belmont before?", "everything Novare sold", "apartments in Cobb under $150k per unit"'
+                  className="flex-1 min-w-0 px-4 py-3 text-lg bg-white border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   disabled={aiLoading}
                 />
                 <button
                   onClick={handleAiSearch}
                   disabled={aiLoading || !aiQuery.trim()}
-                  className={`px-6 py-3 rounded-lg font-semibold text-white transition-all flex items-center gap-2 ${
+                  className={`px-6 py-3 rounded-lg font-semibold text-white transition-all flex items-center justify-center gap-2 ${
                     aiLoading || !aiQuery.trim()
                       ? 'bg-gray-300 cursor-not-allowed'
                       : 'bg-indigo-600 hover:bg-indigo-700 shadow-md'
@@ -1396,22 +1500,40 @@ function UserDashboard() {
 
             {aiHistory && <HistoryResults answer={aiHistory} onClose={() => setAiHistory(null)} />}
 
-            {/* Property Search Bar */}
-            <div className="mb-4">
-              <div className="relative">
+            {/* Results toolbar */}
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 min-w-[240px]">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="text"
                   value={propertySearchText}
                   onChange={(e) => setPropertySearchText(e.target.value)}
-                  placeholder="Search properties, cities, addresses..."
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Quick find: name, old name, city, address, owner…"
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
+              <button
+                onClick={() => setShowFilters(v => !v)}
+                className={`px-3 py-2.5 rounded-lg border text-sm font-medium flex items-center gap-1.5 ${showFilters || activeFilterCount > 0 ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+                {showFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={exportExcel}
+                disabled={exporting || filteredProperties.length === 0}
+                title="Download the rows shown below as an Excel file"
+                className="px-3 py-2.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-sm font-medium flex items-center gap-1.5 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                Excel
+              </button>
             </div>
 
             {/* Filters */}
-            {filters && (
+            {showFilters && filters && (
+            <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <select
                   value={selectedCity}
@@ -1499,7 +1621,6 @@ function UserDashboard() {
                   ))}
                 </select>
               </div>
-            )}
 
             {/* Owner / Seller / Street / Zip Filters */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
@@ -1594,23 +1715,27 @@ function UserDashboard() {
                 />
               </div>
             </div>
+            </>
+            )}
 
             {/* Results */}
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between">
               <p className="text-sm text-gray-600">
                 Showing <span className="font-semibold">{filteredProperties.length.toLocaleString()}</span> of <span className="font-semibold">{properties.length.toLocaleString()}</span> properties
               </p>
-              <button
-                onClick={clearPropertyFilters}
-                className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
-              >
-                <X className="w-4 h-4" />
-                Clear Filters
-              </button>
+              {(activeFilterCount > 0 || propertySearchText) && (
+                <button
+                  onClick={clearPropertyFilters}
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                >
+                  <X className="w-4 h-4" />
+                  Clear Filters
+                </button>
+              )}
             </div>
 
             {/* Property List */}
-            <div className="max-h-[600px] overflow-y-auto">
+            <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
@@ -1621,14 +1746,14 @@ function UserDashboard() {
                       ['units', unitLabel],
                       ['salePrice', 'Price'],
                       ['pricePerUnit', perUnitLabel],
+                      ['saleDate', 'Sale Date'],
                       ['insiderDate', 'Insider Date'],
-                      ['lastInsiderDate', 'Previous Insider Date'],
                     ] as [SortKey, string][]).map(([key, label]) => (
                       <th
                         key={key}
                         onClick={() => toggleSort(key)}
                         title="Click to sort"
-                        className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none hover:text-gray-900 ${sort?.key === key ? 'text-indigo-700' : 'text-gray-600'}`}
+                        className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap hover:text-gray-900 ${sort?.key === key ? 'text-indigo-700' : 'text-gray-600'}`}
                       >
                         {label}{sortMark(key)}
                       </th>
@@ -1637,30 +1762,48 @@ function UserDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {filteredProperties.map((property, idx) => (
+                  {filteredProperties.slice(0, visibleRows).map((property, idx) => (
                     <>
                       <tr key={idx} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedProperty(property)}>
-                        <td className="px-4 py-3 text-sm font-medium text-gray-900">{titleCase(property.propertyName)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{titleCase(property.city)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{titleCase(property.county)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{formatUnits(property.units)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{formatCurrency(property.salePrice)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{formatPerUnit(property.pricePerUnit)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{property.insiderDate}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{property.lastInsiderDate}</td>
-                        <td className="px-4 py-3 text-sm" onClick={(e) => { e.stopPropagation(); setExpandedRow(expandedRow === idx ? null : idx); }}>
-                          {expandedRow === idx ? (
-                            <ChevronUp className="w-5 h-5 text-gray-400" />
-                          ) : (
-                            <ChevronDown className="w-5 h-5 text-gray-400" />
+                        <td className="px-4 py-3 text-sm font-medium text-gray-900 max-w-[280px]" title={titleCase(property.propertyName)}>
+                          <div className="truncate">{primaryName(property.propertyName)}</div>
+                          {aliasNames(property.propertyName) && (
+                            <div className="truncate text-xs font-normal text-gray-400">{aliasNames(property.propertyName)}</div>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{titleCase(property.city)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{titleCase(property.county)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatUnits(property.units)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatCurrency(property.salePrice)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatPerUnit(property.pricePerUnit)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.saleDate}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.insiderDate}</td>
+                        <td className="px-2 py-3 text-sm whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => showHistoryFor(property)}
+                              title="Owners, sales and name changes for this property across every week"
+                              className="p-1.5 rounded text-indigo-600 hover:bg-indigo-50"
+                            >
+                              <Clock className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setExpandedRow(expandedRow === idx ? null : idx)}
+                              title={expandedRow === idx ? 'Hide details' : 'More details'}
+                              className="p-1.5 rounded text-gray-400 hover:bg-gray-100"
+                            >
+                              {expandedRow === idx ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                       {expandedRow === idx && (
                         <tr>
                           <td colSpan={9} className="px-4 py-4 bg-gray-50">
                             <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div className="col-span-2"><span className="font-semibold">Full name:</span> {titleCase(property.propertyName)}</div>
                               <div><span className="font-semibold">Address:</span> {titleCase(property.address)}</div>
+                              <div><span className="font-semibold">Previous Insider Date:</span> {property.lastInsiderDate || '—'}</div>
                               <div><span className="font-semibold">Zip:</span> {property.zip}</div>
                               <div><span className="font-semibold">Market Area:</span> {property.marketArea}</div>
                               <div><span className="font-semibold">District:</span> {property.district}</div>
@@ -1700,10 +1843,19 @@ function UserDashboard() {
                   ))}
                 </tbody>
               </table>
+              {filteredProperties.length > visibleRows && (
+                <div className="flex items-center justify-center gap-4 py-4 border-t border-gray-200 text-sm">
+                  <span className="text-gray-500">Showing {visibleRows.toLocaleString()} of {filteredProperties.length.toLocaleString()}</span>
+                  <button onClick={() => setVisibleRows(v => v + PAGE_SIZE)} className="px-4 py-2 rounded-lg border border-gray-300 font-medium text-gray-700 hover:bg-gray-50">
+                    Show {Math.min(PAGE_SIZE, filteredProperties.length - visibleRows)} more
+                  </button>
+                  <button onClick={() => setVisibleRows(filteredProperties.length)} className="text-blue-600 hover:underline">Show all</button>
+                </div>
+              )}
             </div>
           </div>
         ) : activeView === 'history' ? (
-          <PropertyHistory databaseType={databaseType} fixedMode="history" />
+          <PropertyHistory databaseType={databaseType} fixedMode="history" initialQuery={historyQuery} />
         ) : null}
 
         {/* Full Property Report Modal */}
@@ -1719,8 +1871,10 @@ function UserDashboard() {
               {/* Modal Header */}
               <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-8 py-6 rounded-t-2xl flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold">{selectedProperty.propertyName}</h2>
-                  <p className="text-blue-100 text-sm mt-1">Full Property Report</p>
+                  <h2 className="text-2xl font-bold">{primaryName(selectedProperty.propertyName)}</h2>
+                  <p className="text-blue-100 text-sm mt-1">
+                    {aliasNames(selectedProperty.propertyName) || 'Insider Report'}{selectedProperty.insiderDate ? ` · reported ${selectedProperty.insiderDate}` : ''}
+                  </p>
                 </div>
                 <button
                   onClick={() => setSelectedProperty(null)}
@@ -1749,23 +1903,35 @@ function UserDashboard() {
                 ))}
 
                 {/* Comments */}
-                {getFullComments(selectedProperty) && (
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4">
-                      Comments
-                    </h3>
-                    <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{getFullComments(selectedProperty)}</p>
-                  </div>
-                )}
+                {getFullComments(selectedProperty) && (() => {
+                  const raw = getFullComments(selectedProperty);
+                  const facts = parseComments(raw);
+                  return (
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4">
+                        Databank Notes
+                      </h3>
+                      {facts.length > 0 && (
+                        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 mb-4">
+                          {facts.map((f) => (
+                            <div key={f.label} className="flex justify-between gap-4 py-1.5 border-b border-gray-100 text-sm">
+                              <dt className="font-semibold text-gray-600 whitespace-nowrap">{f.label}</dt>
+                              <dd className="text-gray-900 text-right">{f.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                      <details open={facts.length === 0} className="text-sm text-gray-700">
+                        <summary className="cursor-pointer text-gray-500 hover:text-gray-800 select-none">Original researcher notes</summary>
+                        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{raw}</p>
+                      </details>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
         )}
-
-        {/* Footer */}
-        <div className="mt-8 text-center text-gray-500 text-sm">
-          <p>© 2025 Databank Property Reports. All rights reserved.</p>
-        </div>
       </div>
     </div>
   );

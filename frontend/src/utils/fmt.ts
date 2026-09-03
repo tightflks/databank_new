@@ -27,6 +27,21 @@ export function titleCase(s: string | null | undefined): string {
     .replace(/\b(O|D)'([a-z])/g, (_, a, b) => `${a}'${b.toUpperCase()}`);
 }
 
+// Reflex chains a property's names with "/" — current name first, former names after ("CIELO@VININGS/WAS WINDWOOD/...").
+function nameParts(s: string | null | undefined): string[] {
+  return (s || '').split('/').map(p => p.trim()).filter(Boolean);
+}
+
+export function primaryName(s: string | null | undefined): string {
+  const parts = nameParts(s);
+  return parts.length ? titleCase(parts[0]) : '';
+}
+
+export function aliasNames(s: string | null | undefined): string {
+  const parts = nameParts(s).slice(1).map(p => titleCase(p.replace(/^was\s+/i, '')));
+  return parts.length ? `formerly ${parts.join(' · ')}` : '';
+}
+
 const MONEY = /PRICE|^\$|LOAN|INCOME/;
 
 export function fmtValue(field: string, v: string) {

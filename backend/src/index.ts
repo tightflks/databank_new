@@ -58,6 +58,15 @@ db.exec(`
     FOREIGN KEY (upload_id) REFERENCES uploads(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message TEXT NOT NULL,
+    contact TEXT,
+    page TEXT,
+    database_type TEXT,
+    created_date DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE INDEX IF NOT EXISTS idx_upload_id ON excel_data(upload_id);
   CREATE INDEX IF NOT EXISTS idx_upload_date ON uploads(upload_date DESC);
   CREATE INDEX IF NOT EXISTS idx_report_upload ON saved_reports(upload_id);
@@ -615,8 +624,68 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
 // Middleware
 app.set('trust proxy', 1);
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 registerAuthRoutes(app);
+
+// Current search results -> .xlsx. The browser already holds the filtered rows, so it sends them
+// as { columns: [{key,label}], rows: [{key: value}] } and gets a workbook back.
+app.post('/api/export/xlsx', rateLimit(60, 'Export limit reached ({n} an hour)'), (req: Request, res: Response) => {
+  const { columns, rows, filename } = req.body as {
+    columns?: { key: string; label: string }[];
+    rows?: Record<string, string | number | null>[];
+    filename?: string;
+  };
+  if (!Array.isArray(columns) || !columns.length || !Array.isArray(rows)) {
+    return res.status(400).json({ error: 'columns and rows are required' });
+  }
+  if (rows.length > 20000) return res.status(413).json({ error: 'Too many rows to export at once (max 20,000)' });
+
+  const header = columns.map((c) => c.label);
+  const body = rows.map((r) => columns.map((c) => {
+    const v = r[c.key];
+    if (v === null || v === undefined || v === '') return '';
+    if (typeof v === 'number') return v;
+    const n = Number(String(v).replace(/[$,\s]/g, ''));
+    return /^[\s$,\d.-]+$/.test(String(v)) && Number.isFinite(n) ? n : v;
+  }));
+  const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
+  ws['!cols'] = columns.map((c, i) => ({
+    wch: Math.min(60, Math.max(c.label.length, ...body.slice(0, 200).map((r) => String(r[i] ?? '').length)) + 2),
+  }));
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: body.length, c: columns.length - 1 } }) };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Properties');
+  const buf: Buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  const safe = String(filename || 'databank-export').replace(/[^\w.-]+/g, '-').slice(0, 80);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${safe}.xlsx"`);
+  res.send(buf);
+});
+
+// Feedback from testers: anyone can post, only admins can read.
+const insertFeedbackStmt: any = db.prepare(`INSERT INTO feedback (message, contact, page, database_type) VALUES (?, ?, ?, ?)`);
+const listFeedbackStmt: any = db.prepare(`SELECT * FROM feedback ORDER BY created_date DESC LIMIT 500`);
+const deleteFeedbackStmt: any = db.prepare(`DELETE FROM feedback WHERE id = ?`);
+
+app.post('/api/feedback', rateLimit(20, 'Feedback limit reached ({n} an hour)'), (req: Request, res: Response) => {
+  const { message, contact, page, database_type } = req.body as Record<string, unknown>;
+  const text = typeof message === 'string' ? message.trim() : '';
+  if (!text) return res.status(400).json({ error: 'message is required' });
+  if (text.length > 4000) return res.status(400).json({ error: 'message too long (4,000 characters max)' });
+  const clip = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : null);
+  const info = insertFeedbackStmt.run(text, clip(contact, 200), clip(page, 200), clip(database_type, 40));
+  res.json({ ok: true, id: Number(info.lastInsertRowid) });
+});
+
+app.get('/api/feedback', requireAdmin, (_req: Request, res: Response) => {
+  res.json(listFeedbackStmt.all());
+});
+
+app.delete('/api/feedback/:id', requireAdmin, (req: Request, res: Response) => {
+  deleteFeedbackStmt.run(Number(req.params.id));
+  res.json({ ok: true });
+});
 
 // Nixpacks installs Chromium into /nix/store (on PATH), not at the /usr/bin path in
 // PUPPETEER_EXECUTABLE_PATH; fall back to whatever `chromium` resolves to.

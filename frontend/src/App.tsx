@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut } from 'lucide-react';
+import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare } from 'lucide-react';
+import FeedbackWidget from './FeedbackWidget';
+import FeedbackList from './FeedbackList';
 import UserDashboard from './UserDashboard';
 import DatabaseStatus from './DatabaseStatus';
 import PropertyHistory from './PropertyHistory';
@@ -53,8 +55,18 @@ const databaseLabel = (value?: string) => {
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly'>(ADMIN_ROUTE ? 'generate' : 'user');
+  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('[data-menu]')) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [menuOpen]);
 
   useEffect(() => {
     axios.get(`${API_URL}/api/auth/me`)
@@ -238,22 +250,59 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            {activeTab === 'user' ? 'User Dashboard' : 'Databank Generator (Admin)'}
-          </h1>
-          <p className="text-lg text-gray-600">
-            {activeTab === 'user' 
-              ? 'Browse and access property reports' 
-              : 'Transform your Excel data into professional PDF reports'}
-          </p>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      {/* Brand bar — matches databankinfo.com (navy wordmark, "Research Database") */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-3 min-w-0">
+            <img src="/databank-logo.png" alt="Databank" className="h-8 w-auto" />
+            <span className="hidden sm:inline text-sm text-gray-500 border-l border-gray-300 pl-3 truncate">
+              {ADMIN_ROUTE ? 'Administration' : 'Research Database'}
+            </span>
+          </a>
+          <div className="flex items-center gap-4">
+            <a href="tel:+14048728880" className="hidden md:inline text-sm text-gray-500 hover:text-[#0b1f5c]">☎ (404) 872-8880</a>
+            <div className="relative" data-menu>
+              <button
+                onClick={() => setMenuOpen(v => !v)}
+                aria-label="Menu"
+                aria-expanded={menuOpen}
+                className="p-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100"
+              >
+                {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-sm">
+                  <a href="/" className={`flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 ${!ADMIN_ROUTE ? 'text-[#0b1f5c] font-semibold' : 'text-gray-700'}`}>
+                    <Users className="w-4 h-4" /> Customer view
+                  </a>
+                  <a href="/admin" className={`flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 ${ADMIN_ROUTE ? 'text-[#0b1f5c] font-semibold' : 'text-gray-700'}`}>
+                    <Lock className="w-4 h-4" /> {isAdmin ? 'Admin' : 'Admin login'}
+                  </a>
+                  {isAdmin && (
+                    <>
+                      <div className="my-1 border-t border-gray-100" />
+                      <button onClick={() => { setMenuOpen(false); logout(); }} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-gray-700 hover:bg-gray-50">
+                        <LogOut className="w-4 h-4" /> Sign out
+                      </button>
+                    </>
+                  )}
+                  <div className="my-1 border-t border-gray-100" />
+                  <a href="https://www.databankinfo.com" target="_blank" rel="noreferrer" className="block px-4 py-2.5 text-gray-500 hover:bg-gray-50">databankinfo.com ↗</a>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex-1">
+        {ADMIN_ROUTE && (
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">Databank Administration</h1>
+        )}
 
         {/* Navigation Tabs (admin only) */}
-        {ADMIN_ROUTE && <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        {ADMIN_ROUTE && <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
           <button
             onClick={() => setActiveTab('generate')}
             className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
@@ -298,18 +347,18 @@ function App() {
             <Calendar className="w-5 h-5" />
             Weekly files
           </button>
+          <button
+            onClick={() => setActiveTab('feedback')}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'feedback'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/80'
+            }`}
+          >
+            <MessageSquare className="w-5 h-5" />
+            Feedback
+          </button>
         </div>}
-
-        {ADMIN_ROUTE && isAdmin && (
-          <div className="flex justify-end mb-4 gap-4 text-sm">
-            <a href="/" className="text-gray-600 hover:text-gray-900 flex items-center gap-1">
-              <Users className="w-4 h-4" /> Open User View
-            </a>
-            <button onClick={logout} className="text-gray-600 hover:text-gray-900 flex items-center gap-1">
-              <LogOut className="w-4 h-4" /> Sign out
-            </button>
-          </div>
-        )}
 
         {/* Tab Content */}
         {!ADMIN_ROUTE ? (
@@ -559,6 +608,8 @@ function App() {
             </div>
             <PropertyHistory databaseType={selectedDatabase} fixedMode="weekly" />
           </div>
+        ) : activeTab === 'feedback' ? (
+          <FeedbackList />
         ) : (
           <div className="space-y-6">
             {/* Database Filter */}
@@ -770,6 +821,15 @@ function App() {
           </div>
         )}
       </div>
+
+      <footer className="border-t border-gray-200 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 pr-40 sm:pr-40 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-500">
+          <span>Databank · Atlanta commercial real-estate research since 1970</span>
+          <span>3108 Piedmont Road, Suite 235, Atlanta, GA 30305 · (404) 872-8880 · <a href="https://www.databankinfo.com" target="_blank" rel="noreferrer" className="hover:text-[#0b1f5c]">databankinfo.com</a></span>
+        </div>
+      </footer>
+
+      {!ADMIN_ROUTE && <FeedbackWidget />}
     </div>
   );
 }

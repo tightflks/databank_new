@@ -17,7 +17,7 @@ const money = (n: number) =>
 
 const weekLabel = (w: string | null) => {
   if (!w) return 'latest week';
-  const m = /^(\d{4})(\d{2})(\d{2})/.exec(w);
+  const m = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(w);
   if (!m) return w;
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
@@ -48,13 +48,15 @@ function VolumeChart({ quarters }: { quarters: Stats['quarters'] }) {
     <div className="bg-white rounded-2xl shadow p-6">
       <div className="flex items-center gap-2 mb-1"><TrendingUp className="w-5 h-5 text-[#0b1f5c]" /><h3 className="font-bold text-gray-900">Atlanta sales volume by quarter</h3></div>
       <p className="text-xs text-gray-500 mb-5">All five databases · sale price of reported transactions</p>
-      <div className="flex items-end gap-2 h-40">
+      <div className="flex items-end gap-2">
         {quarters.map((q) => (
           <div key={q.label} className="flex-1 flex flex-col items-center gap-1 group">
-            <span className="text-[10px] text-gray-500 opacity-0 group-hover:opacity-100 transition">{money(q.volume)} · {q.count}</span>
-            <div className="w-full bg-blue-100 rounded-t-md relative" style={{ height: `${Math.max(4, (q.volume / max) * 100)}%` }}>
-              <div className="absolute inset-0 bg-[#0b1f5c] rounded-t-md opacity-80 group-hover:opacity-100" />
-            </div>
+            <span className="text-[10px] text-gray-600 font-medium whitespace-nowrap">{money(q.volume)}</span>
+            <div
+              className="w-full bg-[#0b1f5c] rounded-t-md opacity-80 group-hover:opacity-100 transition"
+              style={{ height: `${Math.max(6, Math.round((q.volume / max) * 140))}px` }}
+              title={`${q.count} transactions`}
+            />
             <span className="text-[10px] text-gray-500 whitespace-nowrap">{q.label}</span>
           </div>
         ))}
@@ -113,7 +115,7 @@ export default function MarketPulse({ onStart }: { onStart: () => void }) {
             {tw.biggest && (
               <div>
                 <p className="text-3xl font-bold text-gray-900">{money(tw.biggest.price)}</p>
-                <p className="text-sm text-gray-600 truncate" title={tw.biggest.name}>largest: {tw.biggest.name}{tw.biggest.city ? `, ${tw.biggest.city}` : ''}</p>
+                <p className="text-sm text-gray-600 truncate" title={tw.biggest.name}>largest sale{tw.biggest.name ? `: ${tw.biggest.name}` : ''}{tw.biggest.city ? `, ${tw.biggest.city}` : ''}</p>
               </div>
             )}
           </div>

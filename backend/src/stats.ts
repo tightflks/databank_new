@@ -49,12 +49,18 @@ export function computeStats(
   for (const s of sheets) {
     if (!week || s.week > week) week = s.week;
     const [header, ...rows] = s.data;
-    const col = (name: string) => header.findIndex((h) => String(h).trim().toUpperCase() === name);
-    const cName = col('PROPERTY NAME');
-    const cCity = col('CITY');
+    const col = (...names: string[]) => {
+      for (const n of names) {
+        const i = header.findIndex((h) => String(h).trim().toUpperCase() === n);
+        if (i >= 0) return i;
+      }
+      return -1;
+    };
+    const cName = col('P NAME', 'PROPERTY NAME', 'NAME');
+    const cCity = col('P CITY', 'CITY');
     const cIns = col('INSIDER DATE');
-    const cPrice = col('SALE PRICE') >= 0 ? col('SALE PRICE') : col('LAND SALE PRICE');
-    const cDate = col('SALE DATE') >= 0 ? col('SALE DATE') : col('LAND SALE DATE');
+    const cPrice = col('SALE PRICE', 'LAND SALE PRICE');
+    const cDate = col('SALE DATE', 'LAND SALE DATE');
     total += rows.length;
 
     let latest: Date | null = null;
@@ -102,7 +108,8 @@ export function registerStatsRoutes(app: Express, db: Db) {
   app.get('/api/public/stats', async (_req: Request, res: Response) => {
     try {
       if (!cache || Date.now() - cache.at > TTL) {
-        const sheets = (await Promise.all(DATABASES.map((d) => latestSheet(d.id).catch(() => null)))).filter(
+        const uniqueDbs = DATABASES.filter((d, i) => DATABASES.findIndex((x) => x.type === d.type) === i);
+        const sheets = (await Promise.all(uniqueDbs.map((d) => latestSheet(d.id).catch(() => null)))).filter(
           (s): s is NonNullable<typeof s> => s !== null
         );
         const featured = featuredStmt.all() as PublicStats['featured'];

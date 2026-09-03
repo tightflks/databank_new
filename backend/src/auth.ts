@@ -90,21 +90,21 @@ export function registerAuthRoutes(app: Express) {
   });
 }
 
-// Ask AI spends Anthropic credit on every call: cap requests per client IP per hour.
-const askHits = new Map<string, number[]>();
-
-export function rateLimit(maxPerHour: number) {
+// Cap requests per client IP per hour (Ask AI spends Anthropic credit on every call; exports and
+// feedback are cheap but open). Each middleware instance keeps its own bucket.
+export function rateLimit(maxPerHour: number, what = 'Ask AI limit reached ({n} questions an hour)') {
+  const hitsByIp = new Map<string, number[]>();
   return (req: Request, res: Response, next: NextFunction) => {
     if (isAdmin(req)) return next();
     const ip = req.ip || 'unknown';
     const now = Date.now();
-    const hits = (askHits.get(ip) ?? []).filter((t) => now - t < 60 * 60 * 1000);
+    const hits = (hitsByIp.get(ip) ?? []).filter((t) => now - t < 60 * 60 * 1000);
     if (hits.length >= maxPerHour) {
       res.setHeader('Retry-After', String(Math.ceil((hits[0] + 60 * 60 * 1000 - now) / 1000)));
-      return res.status(429).json({ error: `Ask AI limit reached (${maxPerHour} questions an hour). Please try again later.` });
+      return res.status(429).json({ error: `${what.replace('{n}', String(maxPerHour))}. Please try again later.` });
     }
     hits.push(now);
-    askHits.set(ip, hits);
+    hitsByIp.set(ip, hits);
     next();
   };
 }

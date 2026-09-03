@@ -7,6 +7,7 @@ import FeedbackList from './FeedbackList';
 import PhotoReview from './PhotoReview';
 import UserDashboard from './UserDashboard';
 import Home from './Home';
+import LoginModal from './LoginModal';
 import DatabaseStatus from './DatabaseStatus';
 import PropertyHistory from './PropertyHistory';
 import AdminLogin from './AdminLogin';
@@ -61,6 +62,13 @@ function App() {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [publicView, setPublicView] = useState<'home' | 'search'>(window.location.hash === '#search' ? 'search' : 'home');
+  const [loginOpen, setLoginOpen] = useState(false);
+
+  const goHomeSection = (id: string) => {
+    setPublicView('home');
+    window.history.replaceState(null, '', `#${id}`);
+    requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }));
+  };
 
   const showPublic = (v: 'home' | 'search') => {
     setPublicView(v);
@@ -269,8 +277,16 @@ function App() {
               {ADMIN_ROUTE ? 'Administration' : 'Research Database'}
             </span>
           </a>
+          {!ADMIN_ROUTE && (
+            <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
+              <button onClick={() => showPublic('home')} className={`hover:text-[#0b1f5c] ${publicView === 'home' ? 'text-[#0b1f5c]' : ''}`}>Home</button>
+              <button onClick={() => goHomeSection('services')} className="hover:text-[#0b1f5c]">Services</button>
+              <button onClick={() => (publicView === 'search' ? undefined : setLoginOpen(true))} className={`hover:text-[#0b1f5c] ${publicView === 'search' ? 'text-[#0b1f5c]' : ''}`}>Research Database</button>
+              <button onClick={() => goHomeSection('contact')} className="hover:text-[#0b1f5c]">Contact</button>
+            </nav>
+          )}
           <div className="flex items-center gap-4">
-            <a href="tel:+14048728880" className="hidden md:inline text-sm text-gray-500 hover:text-[#0b1f5c]">☎ (404) 872-8880</a>
+            <a href="tel:+14048728880" className="hidden lg:inline text-sm text-gray-500 hover:text-[#0b1f5c]">☎ (404) 872-8880</a>
             <div className="relative" data-menu>
               <button
                 onClick={() => setMenuOpen(v => !v)}
@@ -282,6 +298,15 @@ function App() {
               </button>
               {menuOpen && (
                 <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-sm">
+                  {!ADMIN_ROUTE && (
+                    <div className="md:hidden">
+                      <button onClick={() => { setMenuOpen(false); showPublic('home'); }} className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50">Home</button>
+                      <button onClick={() => { setMenuOpen(false); goHomeSection('services'); }} className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50">Services</button>
+                      <button onClick={() => { setMenuOpen(false); setLoginOpen(true); }} className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50">Research Database</button>
+                      <button onClick={() => { setMenuOpen(false); goHomeSection('contact'); }} className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50">Contact</button>
+                      <div className="my-1 border-t border-gray-100" />
+                    </div>
+                  )}
                   <a href="/" className={`flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 ${!ADMIN_ROUTE ? 'text-[#0b1f5c] font-semibold' : 'text-gray-700'}`}>
                     <Users className="w-4 h-4" /> Customer view
                   </a>
@@ -304,6 +329,7 @@ function App() {
           </div>
         </div>
       </header>
+      {loginOpen && <LoginModal onClose={() => setLoginOpen(false)} onGuest={() => { setLoginOpen(false); showPublic('search'); }} />}
 
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex-1">
         {ADMIN_ROUTE && (

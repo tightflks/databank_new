@@ -6,7 +6,7 @@ interface Props {
 
 const HIGHLIGHTS = [
   { icon: Search, title: 'Ask in plain English', text: '"Apartments in Cobb over $5M sold this year" — misspellings and old property names included.' },
-  { icon: Clock, title: 'Every week since 2021', text: 'Who owned it, what it sold for, when it changed hands or changed names — one record per property.' },
+  { icon: Clock, title: 'Full property history', text: 'Who owned it, what it sold for, when it changed hands or changed names — one record per property.' },
   { icon: Building2, title: 'Five databases', text: 'Apartments, Industrial, Office & Shopping, Land Sales, Franchise — updated every Thursday.' },
   { icon: FileSpreadsheet, title: 'Take it with you', text: 'Export exactly the properties you found to Excel, or open the weekly Insider Report as a PDF.' }
 ];

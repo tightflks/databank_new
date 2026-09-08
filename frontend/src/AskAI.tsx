@@ -180,19 +180,21 @@ function period(a: HistoryAnswer) {
   return `${fmtDate(a.firstWeek)} → ${fmtDate(a.latestWeek)}`;
 }
 
-export function HistoryResults({ answer, onClose }: { answer: HistoryAnswer; onClose: () => void }) {
+export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnswer; asked?: string; onClose: () => void }) {
   const [open, setOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const what = answer.subject || answer.entity || answer.field || '';
+  const kind = `${TITLES[answer.question] ?? answer.question}${what ? `: ${what}` : ''}`;
 
   return (
     <div className="mb-6 bg-white border border-amber-200 rounded-xl overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border-b border-amber-200">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 bg-amber-50 border-b border-amber-200">
         <History className="w-5 h-5 text-amber-700" />
-        <h3 className="font-bold text-gray-800">{TITLES[answer.question] ?? answer.question}{what ? `: ${what}` : ''}</h3>
+        <h3 className="font-bold text-gray-800">{asked ? `“${asked}”` : kind}</h3>
         <span className="text-xs text-gray-600">
-          {answer.total.toLocaleString('en-US')} result{answer.total === 1 ? '' : 's'} · {period(answer)} · {answer.weeks} weekly files
+          {answer.total.toLocaleString('en-US')} result{answer.total === 1 ? '' : 's'} · {period(answer)} · searched {answer.weeks} weekly files
         </span>
+        {asked && <span className="text-[11px] uppercase tracking-wide text-amber-800 bg-amber-100 border border-amber-200 rounded-full px-2 py-0.5">{kind}</span>}
         <button onClick={onClose} className="ml-auto text-gray-500 hover:text-gray-800" title="Close"><X className="w-4 h-4" /></button>
       </div>
       {answer.note && <div className="px-4 py-3 text-sm text-amber-800">{answer.note}</div>}

@@ -128,6 +128,8 @@ function UserDashboard() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [aiHistory, setAiHistory] = useState<HistoryAnswer | null>(null);
+  const [aiAsked, setAiAsked] = useState('');
+  const [browseWithAnswer, setBrowseWithAnswer] = useState(false);
   // Ask AI filters on columns that have no dedicated control: contains-text and numeric ranges by header
   const [aiFields, setAiFields] = useState<Record<string, string>>({});
   const [aiRanges, setAiRanges] = useState<Record<string, { min?: number; max?: number }>>({});
@@ -707,8 +709,11 @@ function UserDashboard() {
       const f = response.data.filters || {};
 
       if (response.data.history) {
-        // Cross-week question: answered from the Dropbox archive, current-week filters untouched
+        // Cross-week question: answered from the Dropbox archive; drop any filters left by an earlier question
+        clearPropertyFilters();
         setAiHistory(response.data.history as HistoryAnswer);
+        setAiAsked(aiQuery.trim());
+        setBrowseWithAnswer(false);
         setAiExplanation(f.explanation || 'Answered from the archive of weekly files.');
         setActiveView('search');
         return;
@@ -1508,8 +1513,15 @@ function UserDashboard() {
               <AskCatalogue onPick={(q) => setAiQuery(q)} />
             </div>
 
-            {aiHistory && <HistoryResults answer={aiHistory} onClose={() => setAiHistory(null)} />}
+            {aiHistory && <HistoryResults answer={aiHistory} asked={aiAsked} onClose={() => setAiHistory(null)} />}
 
+            {aiHistory && !browseWithAnswer ? (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                <span>The answer above comes from the archive of every weekly file. This week's full list of {properties.length.toLocaleString()} properties is hidden so it isn't mistaken for part of the answer.</span>
+                <button onClick={() => setBrowseWithAnswer(true)} className="text-blue-600 hover:underline font-medium whitespace-nowrap">Browse this week's list</button>
+              </div>
+            ) : (
+            <>
             {/* Results toolbar */}
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <div className="relative flex-1 min-w-[240px]">
@@ -1863,6 +1875,8 @@ function UserDashboard() {
                 </div>
               )}
             </div>
+            </>
+            )}
           </div>
         ) : activeView === 'history' ? (
           <PropertyHistory databaseType={databaseType} fixedMode="history" initialQuery={historyQuery} />

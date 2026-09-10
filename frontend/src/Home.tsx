@@ -53,9 +53,20 @@ const SERVICES = [
   }
 ];
 
-const CUSTOMERS = [
-  'Ackerman Co.', 'Bull Realty', 'Greystone-Brown Realty Advisors', 'Cocke-Finkelstein', 'Grandbridge R.E. Capital',
-  'Lavista Associates', 'Lee & Associates', 'The Shopping Center Group', 'Thomson Reuters'
+type Customer = { name: string; logo?: string; mark?: boolean; note?: string };
+
+const CUSTOMERS: Customer[] = [
+  { name: 'Cushman & Wakefield', logo: '/customers/cushman-wakefield.png' },
+  { name: 'CBRE', logo: '/customers/cbre.png' },
+  { name: 'GREA', logo: '/customers/grea.png', mark: true, note: 'formerly Brown Realty' },
+  { name: 'Lee & Associates', logo: '/customers/lee-associates.svg' },
+  { name: 'Lavista Associates' },
+  { name: 'Coldwell Banker Commercial', logo: '/customers/coldwell-banker-commercial.png', mark: true },
+  { name: 'NAI Brannen Goddard', logo: '/customers/nai-brannen-goddard.png' },
+  { name: 'Berkadia', logo: '/customers/berkadia.svg' },
+  { name: 'Franklin Street', logo: '/customers/franklin-street.png', mark: true },
+  { name: 'King Industrial Realty', logo: '/customers/king-industrial.png' },
+  { name: 'Eastdil Secured', logo: '/customers/eastdil-secured.png' }
 ];
 
 const MAP_SRC = 'https://www.google.com/maps?q=3108+Piedmont+Road+Suite+235,+Atlanta,+GA+30305&output=embed';
@@ -193,14 +204,23 @@ export default function Home({ onStart }: Props) {
 
       <section className="text-center">
         <p className="uppercase tracking-widest text-xs text-gray-500 mb-4">Valued customers</p>
-        <div className="flex flex-wrap items-center justify-center gap-8 sm:gap-12 opacity-80 mb-6">
-          <img src="/client-1.png" alt="" className="h-8 sm:h-10 w-auto" />
-          <img src="/client-2.png" alt="JLL" className="h-8 sm:h-10 w-auto" />
-          <img src="/client-3.png" alt="" className="h-8 sm:h-10 w-auto" />
-        </div>
-        <div className="flex flex-wrap justify-center gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {CUSTOMERS.map((c) => (
-            <span key={c} className="px-3 py-1.5 rounded-full bg-white shadow-sm border border-gray-200 text-xs sm:text-sm font-medium text-gray-700 uppercase tracking-wide">{c}</span>
+            <div key={c.name} className="flex flex-col items-center justify-center gap-2 h-28 px-4 rounded-xl bg-white shadow-sm border border-gray-200">
+              {c.logo ? (
+                c.mark ? (
+                  <div className="flex items-center gap-2">
+                    <img src={c.logo} alt="" className="h-9 w-9 object-contain" />
+                    <span className="text-sm font-semibold text-gray-800">{c.name}</span>
+                  </div>
+                ) : (
+                  <img src={c.logo} alt={c.name} className="h-9 sm:h-10 max-w-[170px] w-auto object-contain" />
+                )
+              ) : (
+                <span className="text-sm font-semibold text-gray-800 uppercase tracking-wide">{c.name}</span>
+              )}
+              {c.note && <span className="text-[11px] text-gray-500">{c.note}</span>}
+            </div>
           ))}
         </div>
       </section>

@@ -733,6 +733,80 @@ function launchBrowser() {
 
 const ASK_AI_PER_HOUR = Number(process.env.ASK_AI_PER_HOUR) || 30;
 
+// One-page property report PDF for customers (same facts as /api/dropbox/report).
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
+const money = (v: string) => { const n = Number(v); return v && !Number.isNaN(n) ? '$' + Math.round(n).toLocaleString('en-US') : v || '—'; };
+const num = (v: string) => { const n = Number(v); return v && !Number.isNaN(n) ? n.toLocaleString('en-US') : v || '—'; };
+const longDate = (iso: string) => { const d = new Date(iso.length === 10 ? iso + 'T12:00:00Z' : iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
+
+function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
+  const where = [r.address, r.city, r.county ? `${r.county} County` : '', r.zip].filter(Boolean).join(', ');
+  const last = r.saleList[r.saleList.length - 1];
+  const sales = [...r.saleList].reverse();
+  const owners = [...r.ownerTrail].reverse();
+  const isMoney = (label: string) => /price/i.test(label);
+  const facts = r.facts.map((f) => `<div class="fact"><div class="k">${esc(f.label)}</div><div class="v">${esc(isMoney(f.label) ? money(f.value) : num(f.value))}</div></div>`).join('');
+  const lede = last
+    ? `${esc(r.name)} last sold on ${esc(longDate(last.date))}${last.price ? ` for ${money(last.price)}` : ' (price not on record)'}${last.buyer ? ` to ${esc(last.buyer)}` : ''}${last.seller ? `, purchased from ${esc(last.seller)}` : ''}. ` +
+      (r.saleList.length > 1 ? `Databank has ${r.saleList.length} sales on record for this property. ` : '') +
+      (owners.length > 1 ? `It has had ${owners.length} owners since Databank started tracking it in ${longDate(r.first)}.` : '')
+    : `${esc(r.name)} is owned by ${esc(r.owner || 'an unrecorded owner')}. Databank has no sale on record for it.`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    ${embeddedFontCss()}
+    * { box-sizing: border-box; } body { font-family: Inter, Arial, sans-serif; color: #111827; margin: 0; padding: 40px 44px; font-size: 12.5px; line-height: 1.5; }
+    .brand { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 18px; }
+    .brand b { font-size: 15px; color: #1e3a8a; letter-spacing: .04em; } .brand span { color: #6b7280; font-size: 11px; }
+    h1 { font-size: 24px; margin: 0 0 2px; } .sub { color: #4b5563; margin-bottom: 4px; } .former { color: #6b7280; font-size: 11.5px; margin-bottom: 14px; }
+    .lede { background: #eff6ff; border-left: 4px solid #1e3a8a; padding: 10px 14px; font-size: 14px; margin: 14px 0 20px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #1e3a8a; margin: 20px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+    .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 16px; } .fact .k { color: #6b7280; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; } .fact .v { font-weight: 700; font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; } th { text-align: left; color: #6b7280; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; padding: 4px 8px 4px 0; border-bottom: 1px solid #e5e7eb; }
+    td { padding: 6px 8px 6px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; } td.n { white-space: nowrap; } .muted { color: #6b7280; } .tag { font-size: 10.5px; color: #92400e; background: #fef3c7; border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
+    .foot { margin-top: 28px; color: #6b7280; font-size: 10.5px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+  </style></head><body>
+    <div class="brand"><b>DATABANK ATLANTA</b><span>Property report · ${esc(longDate(new Date().toISOString().slice(0, 10)))}</span></div>
+    <h1>${esc(r.name || '(unnamed property)')}${r.removed ? `<span class="tag">no longer on the current list</span>` : ''}</h1>
+    <div class="sub">${esc(where)}${r.parcel ? ` · Parcel ${esc(r.parcel)}` : ''}</div>
+    ${r.formerNames.length ? `<div class="former">Formerly known as ${esc(r.formerNames.join(', '))}</div>` : ''}
+    <div class="lede">${lede}</div>
+    ${facts ? `<h2>About the property</h2><div class="facts">${facts}</div>` : ''}
+    <h2>Ownership</h2>
+    <p><b>Current owner:</b> ${esc(r.owner || '—')}</p>
+    ${owners.length > 1 ? `<table><tr><th>Since</th><th>Owner</th></tr>${owners.map((o, i) => `<tr><td class="n">${i === owners.length - 1 ? `by ${esc(longDate(o.week))}` : esc(longDate(o.week))}</td><td>${esc(o.value)}</td></tr>`).join('')}</table>
+      <p class="muted">"by" = already the owner when Databank's weekly tracking of this property began.</p>` : ''}
+    <h2>Sales on record</h2>
+    ${sales.length ? `<table><tr><th>Date</th><th>Price</th><th>Buyer</th><th>Seller</th></tr>${sales.map((s) => `<tr><td class="n">${esc(s.date)}</td><td class="n">${esc(money(s.price))}</td><td>${esc(s.buyer || '—')}</td><td>${esc(s.seller || '—')}</td></tr>`).join('')}</table>` : '<p class="muted">No sale recorded.</p>'}
+    ${r.loan || r.lender || r.broker ? `<h2>Financing &amp; brokerage</h2><p>${r.loan ? `<b>Loan:</b> ${esc(money(r.loan))}` : ''}${r.lender ? ` &nbsp; <b>Lender:</b> ${esc(r.lender)}` : ''}${r.broker ? ` &nbsp; <b>Broker:</b> ${esc(r.broker)}` : ''}</p>` : ''}
+    ${r.comments ? `<h2>Research notes</h2><p>${esc(r.comments)}</p>` : ''}
+    <div class="foot">Source: Databank Atlanta weekly research files, ${esc(longDate(r.first))} – ${esc(longDate(r.last))} (${r.weeks} weekly files). Record ${esc(r.id)}. www.databankinfo.com · (404) 872-8880</div>
+  </body></html>`;
+}
+
+app.get('/api/dropbox/report.pdf', rateLimit(60, 'Report limit reached ({n} an hour)'), async (req: Request, res: Response) => {
+  const type = typeof req.query.type === 'string' ? req.query.type : '';
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!/^[A-Z0-9]{1,12}$/.test(type) || !/^[A-Z0-9-]{1,32}$/.test(id)) return res.status(400).json({ error: 'type and id are required' });
+  try {
+    const r = await dropboxAsk.propertyReport(type, id);
+    if (!r) return res.status(404).json({ error: 'not found' });
+    const browser = await launchBrowser();
+    try {
+      const page = await browser.newPage();
+      await page.setContent(propertyReportHtml(r), { waitUntil: 'load' });
+      const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } });
+      const slug = (r.name || r.id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="databank-${slug || 'property'}.pdf"`);
+      res.send(Buffer.from(pdf));
+    } finally {
+      await browser.close();
+    }
+  } catch (e) {
+    console.error('Property report PDF failed:', e);
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Report failed' });
+  }
+});
+
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -2271,6 +2345,52 @@ const CORE_COLUMNS = new Set([
   'BUILT\\COMPLETE', 'ORIGINALLY BUILT', 'YEAR BUILT', 'AKA', 'DESCRIPTION', 'INSIDER DESCRIPTION',
 ]);
 
+// Plain-English answer written from the matched archive records only (the
+// model sees a digest of the rows, never the whole archive), so every date,
+// price and name in the text is one that is also in the table beneath it.
+async function summarizeHistoryAnswer(apiKey: string, question: string, answer: Record<string, unknown>): Promise<string | null> {
+  const items = Array.isArray(answer.items) ? (answer.items as Record<string, unknown>[]) : [];
+  if (!items.length) return null;
+  const digest = items.slice(0, 15).map((it) => {
+    if ('count' in it) return { name: it.name, properties_count: it.count };
+    const sales = Array.isArray(it.saleList) ? (it.saleList as Record<string, string>[]).map((s) => ({ date: s.date, price: s.price, seller: s.seller, buyer: s.buyer })) : [];
+    const owners = Array.isArray(it.ownerTrail) ? (it.ownerTrail as Record<string, string>[]).map((o) => o.value) : [];
+    return {
+      name: it.name, address: it.address, city: it.city, county: it.county, size: it.size,
+      owner_now: it.owner, in_database_since: it.first, dropped_off: it.removed || undefined, role: it.role,
+      sales, owners_over_time: owners,
+    };
+  });
+  const facts = {
+    question_type: answer.question, subject: answer.subject, entity: answer.entity, field: answer.field,
+    period: { after: answer.after, before: answer.before, archive_from: answer.firstWeek, archive_to: answer.latestWeek },
+    total_matches: answer.total, shown: digest.length, records: digest,
+  };
+  const system = `You are Databank Atlanta's research analyst. Answer the customer's question in plain English in 1-3 short sentences, using ONLY the facts in the JSON. Prices are in US dollars: write them like $12.5M or $850,000. Dates like "Aug 2022". Name the property/owner/seller exactly as written (title case is fine). If several records match, answer for the best match first and mention how many others there are. If the facts don't contain what was asked (e.g. no sale price), say so plainly instead of guessing. If a record has "dropped_off", note it is no longer on the list. No preamble, no bullet points, no markdown.`;
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        system,
+        messages: [{ role: 'user', content: `Question: ${question}\n\nFacts:\n${JSON.stringify(facts)}` }]
+      })
+    });
+    if (!r.ok) {
+      console.error('Anthropic summary error:', r.status, await r.text());
+      return null;
+    }
+    const j = await r.json() as { content?: { text?: string }[] };
+    const text = (j.content?.[0]?.text ?? '').trim();
+    return text || null;
+  } catch (e) {
+    console.error('Anthropic summary failed:', e);
+    return null;
+  }
+}
+
 app.post('/api/nl-search', rateLimit(ASK_AI_PER_HOUR), async (req: Request, res: Response) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -2434,7 +2554,8 @@ Respond with ONLY a JSON object: "mode", the applicable fields (omit ones that d
         subject: s(filters.subject), entity: s(filters.entity), field: s(filters.field), area: s(filters.area),
         after: s(filters.after), before: s(filters.before),
       });
-      return res.json({ filters, history: answer });
+      const summary = await summarizeHistoryAnswer(apiKey, query.trim(), answer);
+      return res.json({ filters, history: summary ? { ...answer, summary } : answer });
     }
 
     res.json({ filters });

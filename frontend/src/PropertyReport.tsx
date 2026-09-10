@@ -72,9 +72,12 @@ export function PropertyReport({ type, id, onClose }: { type: string; id: string
   const owners = [...r.ownerTrail].reverse();
   const last = r.saleList[r.saleList.length - 1];
   const where = [titleCase(r.address), titleCase(r.city), r.county ? `${titleCase(r.county)} County` : '', r.zip].filter(Boolean).join(', ');
+  const sameOwner = !!last && !!last.buyer && last.buyer.toUpperCase() === last.seller.toUpperCase();
   const lede = last
     ? <>
-        <b>{titleCase(r.name)}</b> last sold on <b>{fmtDate(last.date)}</b>{last.price ? <> for <b>{money(last.price)}</b></> : ' (price not on record)'}{last.buyer ? <> to <b>{titleCase(last.buyer)}</b></> : null}{last.seller ? <>, purchased from {titleCase(last.seller)}</> : null}.
+        {sameOwner
+          ? <><b>{titleCase(r.name)}</b> was last recorded on <b>{fmtDate(last.date)}</b>{last.price ? <> at <b>{money(last.price)}</b></> : null}, staying with <b>{titleCase(last.buyer)}</b> (a transfer or refinancing, not a change of owner).</>
+          : <><b>{titleCase(r.name)}</b> last sold on <b>{fmtDate(last.date)}</b>{last.price ? <> for <b>{money(last.price)}</b></> : ' (price not on record)'}{last.buyer ? <> to <b>{titleCase(last.buyer)}</b></> : null}{last.seller ? <>, purchased from {titleCase(last.seller)}</> : null}.</>}
         {r.saleList.length > 1 ? ` Databank has ${r.saleList.length} sales on record for this property.` : ''}
         {owners.length > 1 ? ` It has had ${owners.length} owners since Databank started tracking it in ${fmtDate(r.first)}.` : ''}
       </>
@@ -106,7 +109,7 @@ export function PropertyReport({ type, id, onClose }: { type: string; id: string
           <h4 className="mt-6 mb-2 text-xs font-semibold uppercase tracking-wider text-blue-900 border-b border-gray-200 pb-1">About the property</h4>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
             {r.facts.map((f) => (
-              <div key={f.label}><div className="text-[11px] uppercase tracking-wide text-gray-500">{f.label}</div><div className="font-semibold">{/price/i.test(f.label) ? money(f.value) : num(f.value)}</div></div>
+              <div key={f.label}><div className="text-[11px] uppercase tracking-wide text-gray-500">{f.label}</div><div className="font-semibold">{/price/i.test(f.label) ? money(f.value) : /built/i.test(f.label) ? f.value : num(f.value)}</div></div>
             ))}
           </div>
         </>

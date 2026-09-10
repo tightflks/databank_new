@@ -354,6 +354,45 @@ function item(p: Stored): AskItem {
   return { ...summarize(p), ownerTrail: trailOf(p, OWNER_FIELD), saleList: salesOf(p), events: p.events };
 }
 
+// A customer-readable one-page report for one property: what it is, who owns
+// it, who owned it before, every sale on record. Same facts as the ask()
+// items, arranged for someone who has never seen a Reflex field name.
+export type PropertyReport = {
+  id: string; type: string; name: string; formerNames: string[]; address: string; city: string; county: string; zip: string; parcel: string;
+  removed: boolean; first: string; last: string; weeks: number;
+  facts: { label: string; value: string }[];
+  owner: string; ownerTrail: Trail; saleList: Sale[];
+  loan: string; lender: string; broker: string; comments: string;
+};
+
+const FACT_FIELDS: [string, string][] = [
+  ['UNITS COMPLETED:', 'Units'], ['UNITS COMPLETED', 'Units'], ['$ UNIT PROJECT', 'Price per unit'], ['# SQ FT BUILT', 'Square feet built'],
+  ['HEATED SF', 'Square feet'], ['# ACRES', 'Acres'], ['$ ACRE', 'Price per acre'], ['YEAR BUILT', 'Year built'], ['BUILT\\COMPLETE', 'Built'],
+  ['ORIGINALLY BUILT', 'Originally built'], ['INSIDER DATE', 'Last published by Databank'],
+];
+const YEAR_ONLY = new Set(['YEAR BUILT', 'BUILT\\COMPLETE', 'ORIGINALLY BUILT']);
+
+export async function propertyReport(type: string, id: string): Promise<PropertyReport | null> {
+  const { hist, byId } = await loadHistory(type);
+  const p = byId.get(id);
+  if (!p) return null;
+  const c = p.current;
+  const names = trailOf(p, 'P NAME').map((n) => n.value).filter((n) => n && norm(n) !== norm(p.name));
+  const facts = FACT_FIELDS.filter(([f]) => c[f]).map(([f, label]) => ({
+    label,
+    value: YEAR_ONLY.has(f) ? c[f].slice(0, 4) : c[f],
+  }));
+  return {
+    id: p.id, type, name: p.name, formerNames: Array.from(new Set(names)), address: p.address, city: p.city, county: p.county, zip: c['P ZIP'] ?? '', parcel: p.parcel,
+    removed: p.removed, first: p.first, last: p.last, weeks: hist.weeks.length,
+    facts,
+    owner: c[OWNER_FIELD] ?? c['OWNER'] ?? '',
+    ownerTrail: trailOf(p, OWNER_FIELD).length ? trailOf(p, OWNER_FIELD) : trailOf(p, 'OWNER'),
+    saleList: salesOf(p),
+    loan: c['$ LOAN'] ?? '', lender: c['LENDER'] ?? '', broker: c['BROKER'] ?? '', comments: c['COMMENTS'] ?? '',
+  };
+}
+
 function inRange(week: string, after?: string, before?: string): boolean {
   return (!after || week >= after) && (!before || week <= before);
 }
@@ -517,6 +556,20 @@ export function registerDropboxRoutes(app: Express) {
         after: str(req.query.after), before: str(req.query.before),
         limit: Number(str(req.query.limit)) || undefined,
       }));
+    } catch (e) {
+      fail(res, e);
+    }
+  });
+
+  // Customer-readable report for one property: ?type=APTS&id=APTS-01234
+  app.get('/api/dropbox/report', async (req: Request, res: Response) => {
+    const type = str(req.query.type);
+    const id = str(req.query.id);
+    if (!TYPE.test(type) || !ID.test(id)) return res.status(400).json({ error: 'type and id are required' });
+    try {
+      const r = await propertyReport(type, id);
+      if (!r) return res.status(404).json({ error: 'not found' });
+      res.json(r);
     } catch (e) {
       fail(res, e);
     }

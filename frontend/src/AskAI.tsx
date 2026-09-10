@@ -1,7 +1,10 @@
 import { Fragment, useState } from 'react';
-import { ChevronDown, ChevronUp, History, X } from 'lucide-react';
-import { Detail } from './PropertyHistory';
+import axios from 'axios';
+import { ChevronDown, ChevronUp, FileSpreadsheet, History, Loader2, X } from 'lucide-react';
+import { PropertyReport } from './PropertyReport';
 import { fmtDate, fmtValue } from './utils/fmt';
+
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 // ---------- What customers can ask ----------
 //
@@ -152,6 +155,7 @@ export type HistoryAnswer = {
   total: number;
   items: (AskItem | RankedEntity)[];
   note?: string;
+  summary?: string;
   subject?: string;
   entity?: string;
   field?: string | null;
@@ -180,11 +184,56 @@ function period(a: HistoryAnswer) {
   return `${fmtDate(a.firstWeek)} → ${fmtDate(a.latestWeek)}`;
 }
 
+async function exportHistory(answer: HistoryAnswer, asked?: string) {
+  const ranked = answer.items.length > 0 && isRanked(answer.items[0]);
+  const columns = ranked
+    ? [{ key: 'rank', label: '#' }, { key: 'name', label: answer.question === 'top_buyers' ? 'Buyer' : 'Seller' }, { key: 'count', label: 'Properties' }, { key: 'ids', label: 'Property IDs' }]
+    : [
+        { key: 'name', label: 'Property' }, { key: 'address', label: 'Address' }, { key: 'city', label: 'City' }, { key: 'county', label: 'County' },
+        { key: 'parcel', label: 'Parcel' }, { key: 'size', label: 'Size' }, { key: 'owner', label: 'Owner now' }, { key: 'saleDate', label: 'Last sale' },
+        { key: 'salePrice', label: 'Last price' }, { key: 'owners', label: 'Owners over time' }, { key: 'sales', label: 'Sales (date · price · seller → buyer)' },
+        { key: 'first', label: 'In database since' }, { key: 'removed', label: 'Dropped off' }, { key: 'role', label: 'Role' },
+      ];
+  const rows = ranked
+    ? (answer.items as RankedEntity[]).map((e, i) => ({ rank: i + 1, name: e.name, count: e.count, ids: e.properties.join(', ') }))
+    : (answer.items as AskItem[]).map((p) => ({
+        name: p.name, address: p.address, city: p.city, county: p.county, parcel: p.parcel, size: p.size, owner: p.owner,
+        saleDate: p.saleDate, salePrice: p.salePrice,
+        owners: p.ownerTrail.map((o) => o.value).join(' → '),
+        sales: p.saleList.map((s) => `${s.date} · ${s.price} · ${s.seller} → ${s.buyer}`).join('\n'),
+        first: p.first, removed: p.removed ? 'yes' : '', role: p.role ?? '',
+      }));
+  const slug = (asked || TITLES[answer.question] || answer.question).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
+  const filename = `databank-${slug || 'answer'}-${new Date().toISOString().slice(0, 10)}`;
+  const res = await axios.post(`${API_URL}/api/export/xlsx`, { columns, rows, filename }, { responseType: 'blob', withCredentials: true });
+  const url = URL.createObjectURL(res.data as Blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${filename}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnswer; asked?: string; onClose: () => void }) {
-  const [open, setOpen] = useState<string | null>(null);
+  const single = answer.question === 'property_history' && answer.items.length === 1 && !isRanked(answer.items[0]) ? (answer.items[0] as AskItem).id : null;
+  const [open, setOpen] = useState<string | null>(single);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showRecords, setShowRecords] = useState(!answer.summary && !single);
+  const [exporting, setExporting] = useState(false);
   const what = answer.subject || answer.entity || answer.field || '';
   const kind = `${TITLES[answer.question] ?? answer.question}${what ? `: ${what}` : ''}`;
+  const doExport = async () => {
+    if (exporting || !answer.items.length) return;
+    setExporting(true);
+    try {
+      await exportHistory(answer, asked);
+    } catch (e) {
+      console.error('Export failed:', e);
+      alert('Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="mb-6 bg-white border border-amber-200 rounded-xl overflow-hidden">
@@ -198,9 +247,29 @@ export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnsw
         <button onClick={onClose} className="ml-auto text-gray-500 hover:text-gray-800" title="Close"><X className="w-4 h-4" /></button>
       </div>
       {answer.note && <div className="px-4 py-3 text-sm text-amber-800">{answer.note}</div>}
-      {open && <Detail type={answer.type} id={open} onClose={() => setOpen(null)} />}
+      {answer.summary && (
+        <div className="px-5 py-4 border-b border-amber-100">
+          <p className="text-base sm:text-lg text-gray-900 leading-relaxed">{answer.summary}</p>
+          <p className="mt-1 text-xs text-gray-500">Written from the {answer.total.toLocaleString('en-US')} matching record{answer.total === 1 ? '' : 's'} below — every date, price and name comes from Databank's weekly files.</p>
+        </div>
+      )}
+      {answer.items.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-gray-50 border-b border-gray-100 text-sm">
+          {(answer.summary || single) && (
+            <button onClick={() => setShowRecords((v) => !v)} className="inline-flex items-center gap-1 text-blue-600 hover:underline font-medium">
+              {showRecords ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              {showRecords ? 'Hide' : 'Show'} the {answer.items.length.toLocaleString('en-US')} record{answer.items.length === 1 ? '' : 's'}
+            </button>
+          )}
+          <button onClick={doExport} disabled={exporting} className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50">
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 text-green-700" />}
+            Export to Excel
+          </button>
+        </div>
+      )}
+      {open && <PropertyReport type={answer.type} id={open} onClose={() => setOpen(null)} />}
 
-      {answer.items.length > 0 && isRanked(answer.items[0]) ? (
+      {!showRecords ? null : answer.items.length > 0 && isRanked(answer.items[0]) ? (
         <table className="min-w-full divide-y divide-gray-100">
           <thead className="bg-gray-50"><tr>{['#', answer.question === 'top_buyers' ? 'Buyer' : 'Seller', 'Properties'].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
           <tbody className="divide-y divide-gray-100">
@@ -240,7 +309,7 @@ export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnsw
                     <td className={`${TD} font-mono text-xs`}>{p.saleDate}</td>
                     <td className={TD}>{fmtValue('SALE PRICE', p.salePrice)}</td>
                     <td className={TD}>{answer.question === 'entity_history' ? p.role : p.first.slice(0, 7)}</td>
-                    <td className={TD}><button onClick={(e) => { e.stopPropagation(); setOpen(p.id); }} className="text-blue-600 hover:underline text-xs">Full record</button></td>
+                    <td className={TD}><button onClick={(e) => { e.stopPropagation(); setOpen(p.id); }} className="text-blue-600 hover:underline text-xs whitespace-nowrap">Report / PDF</button></td>
                   </tr>
                   {expanded === p.id && (
                     <tr className="bg-amber-50/40">

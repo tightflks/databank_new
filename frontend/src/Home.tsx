@@ -204,9 +204,9 @@ export default function Home({ onStart }: Props) {
 
       <section className="text-center">
         <p className="uppercase tracking-widest text-xs text-gray-500 mb-4">Valued customers</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-8 max-w-4xl mx-auto">
           {CUSTOMERS.map((c) => (
-            <div key={c.name} className="flex flex-col items-center justify-center gap-2 h-28 px-4 rounded-xl bg-white shadow-sm border border-gray-200">
+            <div key={c.name} className="flex flex-col items-center justify-center gap-1">
               {c.logo ? (
                 c.mark ? (
                   <div className="flex items-center gap-2">

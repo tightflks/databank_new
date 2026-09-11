@@ -971,7 +971,7 @@ function UserDashboard() {
             }`}
           >
             <FileText className="w-5 h-5" />
-            Saved Reports
+            Weekly Reports
           </button>
         </div>
 
@@ -1105,59 +1105,9 @@ function UserDashboard() {
 
         {/* Stats Cards (reports view) */}
         {activeView === 'reports' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-blue-500">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Total Reports</p>
-                <p className="text-3xl font-bold text-gray-900">{reports.length}</p>
-              </div>
-              <FileText className="w-12 h-12 text-blue-500 opacity-20" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-green-500">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Total Properties</p>
-                <p className="text-3xl font-bold text-gray-900">
-                  {reports.reduce((sum, r) => sum + r.property_count, 0).toLocaleString()}
-                </p>
-              </div>
-              <Database className="w-12 h-12 text-green-500 opacity-20" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-purple-500">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Latest Report</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {reports.length > 0 ? formatDate(reports[0].created_date).split(',')[0] : 'N/A'}
-                </p>
-              </div>
-              <TrendingUp className="w-12 h-12 text-purple-500 opacity-20" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-yellow-500">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Total Sales Value</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {(() => {
-                    const total = properties.reduce((sum, p) => {
-                      const price = parseFloat(p.salePrice?.replace(/[^0-9.-]/g, '') || '0');
-                      return sum + (isNaN(price) ? 0 : price);
-                    }, 0);
-                    return total > 0 ? `$${total.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '$0';
-                  })()}
-                </p>
-              </div>
-              <DollarSign className="w-12 h-12 text-yellow-500 opacity-20" />
-            </div>
-          </div>
-        </div>
+          <p className="text-sm text-gray-600 mb-6">
+            The Insider Reports Databank publishes each week — the transactions its analysts verified and released. Open one to read it or download the PDF.
+          </p>
         )}
 
         {/* Dashboard empty state */}
@@ -1355,7 +1305,7 @@ function UserDashboard() {
             {/* Reports List */}
         <div className="bg-white rounded-2xl shadow-xl p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">Available Reports</h2>
+            <h2 className="text-2xl font-bold text-gray-800">Weekly Insider Reports</h2>
             <span className="text-sm text-gray-500">
               {filteredReports.length} {filteredReports.length === 1 ? 'report' : 'reports'}
             </span>

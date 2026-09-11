@@ -80,7 +80,27 @@ function trail(p: PropertyDetail, field: string): { week: string; value: string 
   if (evs.length) out.push({ week: p.first, value: evs[0][2] });
   else if (p.current[field]) out.push({ week: p.first, value: p.current[field] });
   for (const e of evs) out.push({ week: e[0], value: e[3] });
-  return out.filter((x, i, a) => x.value && (i === 0 || x.value !== a[i - 1].value));
+  return dedupe(out.filter((x) => x.value));
+}
+
+// Drop adjacent repeats and one-week blips (X → Y → X is a data-entry slip, not a change).
+function dedupe<T extends { value: string }>(a: T[]): T[] {
+  const noBlip = a.filter((x, i) => !(i > 0 && i + 1 < a.length && a[i - 1].value === a[i + 1].value && x.value !== a[i - 1].value));
+  return noBlip.filter((x, i) => i === 0 || x.value !== noBlip[i - 1].value);
+}
+
+// Sales as (date, price) pairs: the price in force the week each sale date appeared.
+function sales(p: PropertyDetail): { week: string; value: string; price: string }[] {
+  const dates = trail(p, 'SALE DATE');
+  const prices = trail(p, 'SALE PRICE');
+  const priceAt = (week: string) => {
+    let v = '';
+    for (const x of prices) if (x.week <= week) v = x.value;
+    return v || (week >= p.last ? p.salePrice : '');
+  };
+  const out = dates.map((d) => ({ week: d.week, value: d.value, price: priceAt(d.week) }));
+  const seen = new Set<string>();
+  return out.filter((s) => (seen.has(s.value) ? false : (seen.add(s.value), true)));
 }
 
 export function Detail({ type, id, onClose }: { type: string; id: string; onClose: () => void }) {
@@ -110,8 +130,7 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
   }
 
   const owners = trail(p, p.current['TAX OWNER'] !== undefined || p.events.some((e) => e[1] === 'TAX OWNER') ? 'TAX OWNER' : 'OWNER');
-  const saleDates = trail(p, 'SALE DATE');
-  const salePrices = trail(p, 'SALE PRICE');
+  const saleDates = sales(p);
   const byWeek = new Map<string, Event[]>();
   for (const e of p.events) {
     if (!all && !HEADLINE.has(e[1]) && e[1] !== '*') continue;
@@ -154,8 +173,8 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
           <div className="text-xs text-gray-600">Owner{owners.length === 1 ? '' : 's'} on record since {fmtDate(p.first)}</div>
         </div>
         <div className="bg-orange-50 rounded-xl p-4">
-          <div className="text-2xl font-bold text-gray-900">{p.seen}</div>
-          <div className="text-xs text-gray-600">Weekly files it appears in · of {p.weeks}</div>
+          <div className="text-2xl font-bold text-gray-900">{fmtDate(p.first)}</div>
+          <div className="text-xs text-gray-600">Tracked by Databank since</div>
         </div>
       </div>
 
@@ -175,7 +194,7 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
             {saleDates.map((s, i) => (
               <li key={i}>
                 <span className="font-mono text-xs text-gray-500 mr-2">{s.value}</span>
-                {fmtValue('SALE PRICE', salePrices[i]?.value ?? (i === saleDates.length - 1 ? p.salePrice : ''))}
+                {fmtValue('SALE PRICE', s.price || (i === saleDates.length - 1 ? p.salePrice : ''))}
                 {i === 0 && saleDates.length > 1 ? <span className="text-xs text-gray-400 ml-1">(on file when tracking began)</span> : null}
               </li>
             ))}
@@ -263,6 +282,11 @@ function Properties({ type, label, initialQuery = '' }: { type: string; label: s
       });
     return () => ctrl.abort();
   }, [type, term, page, removed]);
+
+  // Coming from a row's History link: open the property straight away when it matches exactly one.
+  useEffect(() => {
+    if (initialQuery && data && data.total === 1 && term === initialQuery && data.items[0]) setOpen(data.items[0].id);
+  }, [initialQuery, data, term]);
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 

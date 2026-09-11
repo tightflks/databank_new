@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import PropertyPhoto from './PropertyPhoto';
-import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock } from 'lucide-react';
+import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock, FileDown } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
@@ -9,6 +9,8 @@ import { computePricePerUnit } from './utils/pricePerUnit';
 import { titleCase, primaryName, aliasNames } from './utils/fmt';
 import { tokenMatches, wordsOf } from './utils/fuzzy';
 import { parseComments } from './utils/comments';
+import { PropertyReport } from './PropertyReport';
+import { downloadReportPdf } from './utils/reportPdf';
 
 const PAGE_SIZE = 100;
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
@@ -28,6 +30,9 @@ const NUMERIC_SORT: SortKey[] = ['units', 'salePrice', 'pricePerUnit'];
 const DATE_SORT: SortKey[] = ['saleDate', 'insiderDate'];
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+
+// Archive (Dropbox) file type per database — the key the property-history API uses.
+const ARCHIVE_TYPE: Record<string, string> = { apartments: 'APTS', franchise: 'FRANCHIS', industrial: 'IND', land: 'LANDSALE', offices: 'OFFSHOP', retail: 'OFFSHOP' };
 
 const DATABASE_OPTIONS = [
   { value: 'apartments', label: '🏢 Apartments' },
@@ -89,6 +94,7 @@ function UserDashboard() {
   const [showFilters, setShowFilters] = useState(false);
   const [visibleRows, setVisibleRows] = useState(PAGE_SIZE);
   const [exporting, setExporting] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
   const [propertySearchText, setPropertySearchText] = useState('');
   const searchQuery = useDebounced(propertySearchText, 250);
   const [selectedCity, setSelectedCity] = useState('');
@@ -121,6 +127,8 @@ function UserDashboard() {
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
+  const [reportFor, setReportFor] = useState<{ type: string; id: string } | null>(null);
+  const [reportBusy, setReportBusy] = useState<'report' | 'pdf' | null>(null);
 
   // AI natural language search states
   const [aiQuery, setAiQuery] = useState('');
@@ -352,7 +360,7 @@ function UserDashboard() {
 
         const salePriceStr = String(getCell('SALE PRICE')).trim();
         // Apartments size by units; industrial sizes by building square feet
-        const unitsStr = String(getCellAny('UNITS COMPLETED', '# SQ FT BUILT')).trim();
+        const unitsStr = String(getCellAny('UNITS COMPLETED:', 'UNITS COMPLETED', '# SQ FT BUILT')).trim();
         const pricePerUnit = computePricePerUnit(
           salePriceStr,
           unitsStr,
@@ -650,6 +658,39 @@ function UserDashboard() {
     return best;
   }, [properties]);
 
+  // The row card is this week's record; the one-page report lives on the archive property.
+  // Find it by parcel, then by name/address, and take the single best match.
+  const findArchiveProperty = async (p: Property): Promise<{ type: string; id: string } | null> => {
+    const type = ARCHIVE_TYPE[databaseType];
+    if (!type) return null;
+    const queries = [String(p.parcel || '').trim(), primaryName(p.propertyName), String(p.address || '').trim()].filter(Boolean);
+    for (const q of queries) {
+      const res = await axios.get<{ total: number; items: { id: string; name: string }[] }>(`${API_URL}/api/dropbox/properties`, { params: { type, q, page: 0 } });
+      const items = res.data.items || [];
+      if (items.length === 1) return { type, id: items[0].id };
+      const exact = items.find((i) => i.name.toUpperCase() === String(p.propertyName || '').toUpperCase());
+      if (exact) return { type, id: exact.id };
+      if (items.length > 1 && q === queries[0]) return { type, id: items[0].id };
+    }
+    return null;
+  };
+
+  const openReportFor = async (p: Property, mode: 'report' | 'pdf') => {
+    if (reportBusy) return;
+    setReportBusy(mode);
+    try {
+      const found = await findArchiveProperty(p);
+      if (!found) { alert('This property is not in the history archive yet, so there is no report for it.'); return; }
+      if (mode === 'report') setReportFor(found);
+      else await downloadReportPdf(found.type, found.id, primaryName(p.propertyName));
+    } catch (e) {
+      console.error('Report failed:', e);
+      alert('Could not open the report. Please try again.');
+    } finally {
+      setReportBusy(null);
+    }
+  };
+
   const showHistoryFor = (p: Property) => {
     setHistoryQuery(primaryName(p.propertyName) || p.address);
     setActiveView('history');
@@ -691,6 +732,65 @@ function UserDashboard() {
     setAiHistory(null);
     setAiExplanation(null);
     setAiError(null);
+  };
+
+  // Dashboard rows open Search Database on just that slice: every other filter (and any
+  // Ask AI answer hiding the list) is cleared first so the rows actually show.
+  const drillDown = (apply: () => void) => {
+    clearPropertyFilters();
+    setBrowseWithAnswer(false);
+    apply();
+    setActiveView('search');
+  };
+  const recentSince = recentInsiderStats.dates[recentInsiderStats.dates.length - 1] || '';
+
+  const downloadSnapshot = async () => {
+    if (snapshotting) return;
+    setSnapshotting(true);
+    try {
+      const label = (DATABASE_OPTIONS.find((o) => o.value === databaseType)?.label || databaseType).replace(/^[^A-Za-z]+/, '');
+      const rs = recentInsiderStats;
+      const count = (n: number) => `${n.toLocaleString()} propert${n !== 1 ? 'ies' : 'y'}`;
+      const tally = (key: 'county' | 'zip' | 'city') => {
+        const m = new Map<string, number>();
+        properties.forEach((p) => { const k = String(p[key] || '').trim(); if (k) m.set(k, (m.get(k) || 0) + 1); });
+        return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([label, n]) => ({ label, value: count(n) }));
+      };
+      const snapshot = {
+        database: label,
+        scope: 'Market snapshot',
+        period: rs.dates.length ? `Recent Insider activity: ${rs.dates.length} Insider dates, ${recentSince} – ${rs.dates[0]}` : '',
+        source: latestUploadName ? `Databank Atlanta weekly research file ${latestUploadName}` : '',
+        tiles: [
+          { label: 'Properties (recent)', value: rs.propertyCount.toLocaleString() },
+          { label: 'Total volume', value: formatCompactCurrency(rs.totalVolume) },
+          { label: 'Average price', value: formatCompactCurrency(rs.avgPrice) },
+          { label: 'Median price', value: formatCompactCurrency(rs.medianPrice) },
+          { label: 'Top sale', value: formatCompactCurrency(rs.maxPrice) },
+          { label: `Total ${unitLabel}`, value: rs.totalUnits > 0 ? rs.totalUnits.toLocaleString() : '—' },
+        ],
+        sections: [
+          { title: 'Recent activity by county', rows: rs.topCounties.map((c) => ({ label: c.county, value: count(c.count), extra: c.volume > 0 ? formatCompactCurrency(c.volume) : undefined })) },
+          { title: 'Recent activity by city', rows: rs.topCities.map((c) => ({ label: c.city, value: count(c.count) })) },
+          { title: 'Top owners, sales in the last 3 years', note: filteredProperties.length !== properties.length ? 'Within the current search filters' : undefined, rows: topOwners.slice(0, 10).map((o) => ({ label: o.owner, value: count(o.count), extra: o.volume > 0 ? formatCompactCurrency(o.volume) : undefined })) },
+          { title: `All ${properties.length.toLocaleString()} properties by county`, rows: tally('county') },
+          { title: 'By zip code', rows: tally('zip') },
+          { title: 'By city', rows: tally('city') },
+        ],
+      };
+      const res = await axios.post(`${API_URL}/api/market-snapshot.pdf`, snapshot, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `databank-${databaseType}-snapshot.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Snapshot PDF failed:', e);
+      alert('Could not build the PDF. Please try again.');
+    } finally {
+      setSnapshotting(false);
+    }
   };
 
   const handleAiSearch = async () => {
@@ -985,8 +1085,17 @@ function UserDashboard() {
                 <p className="text-sm text-gray-500">
                   Stats across the last {recentInsiderStats.dates.length} insider date{recentInsiderStats.dates.length !== 1 ? 's' : ''}
                   {recentInsiderStats.dates.length > 0 && ` (${recentInsiderStats.dates[recentInsiderStats.dates.length - 1]} – ${recentInsiderStats.dates[0]})`}
+                  {' · click a county or city to see those properties'}
                 </p>
               </div>
+              <button
+                onClick={downloadSnapshot}
+                disabled={snapshotting}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
+                title="One-page PDF of these numbers"
+              >
+                {snapshotting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
+              </button>
             </div>
 
             <div className="space-y-6">
@@ -1050,10 +1159,7 @@ function UserDashboard() {
                           <div
                             key={county}
                             className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                            onClick={() => {
-                              setActiveView('search');
-                              setSelectedCounties([county]);
-                            }}
+                            onClick={() => drillDown(() => { setSelectedCounties([county]); setInsiderDateAfter(recentSince); })}
                           >
                             <span className="font-medium text-gray-700">{county}</span>
                             <span className="text-sm text-gray-500">
@@ -1078,10 +1184,7 @@ function UserDashboard() {
                           <div
                             key={city}
                             className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                            onClick={() => {
-                              setActiveView('search');
-                              setSelectedCity(city);
-                            }}
+                            onClick={() => drillDown(() => { setSelectedCity(city); setInsiderDateAfter(recentSince); })}
                           >
                             <span className="font-medium text-gray-700">{city}</span>
                             <span className="text-sm text-gray-500">
@@ -1135,17 +1238,19 @@ function UserDashboard() {
               </div>
             </div>
             {topOwners.length === 0 ? (
-              <p className="text-sm text-gray-500">No sales with owner information in the last 3 years.</p>
+              <p className="text-sm text-gray-500">
+                No sales with owner information in the last 3 years{filteredProperties.length !== properties.length ? ' within the current search filters' : ''}.
+                {filteredProperties.length !== properties.length && (
+                  <button onClick={clearPropertyFilters} className="ml-2 text-blue-600 hover:underline">Clear filters</button>
+                )}
+              </p>
             ) : (
               <div className="space-y-2">
                 {topOwners.map(({ owner, count, volume, units }) => (
                   <div
                     key={owner}
                     className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                    onClick={() => {
-                      setActiveView('search');
-                      setEntityFilter(owner);
-                    }}
+                    onClick={() => drillDown(() => setEntityFilter(owner))}
                     title="Click to view all properties associated with this owner"
                   >
                     <span className="font-medium text-gray-700 truncate mr-4">{owner}</span>
@@ -1185,10 +1290,7 @@ function UserDashboard() {
                       <div
                         key={county}
                         className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                        onClick={() => {
-                          setActiveView('search');
-                          setSelectedCounties([county]);
-                        }}
+                        onClick={() => drillDown(() => setSelectedCounties([county]))}
                       >
                         <span className="font-medium text-gray-700">{county}</span>
                         <span className="text-sm font-semibold text-blue-600">{count.toLocaleString()} properties</span>
@@ -1219,10 +1321,7 @@ function UserDashboard() {
                       <div
                         key={zip}
                         className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                        onClick={() => {
-                          setActiveView('search');
-                          setSelectedZipcode(zip === 'Unknown' ? '' : zip);
-                        }}
+                        onClick={() => drillDown(() => setSelectedZipcode(zip === 'Unknown' ? '' : zip))}
                       >
                         <span className="font-medium text-gray-700">{zip}</span>
                         <span className="text-sm font-semibold text-green-600">{count.toLocaleString()} properties</span>
@@ -1832,6 +1931,14 @@ function UserDashboard() {
           <PropertyHistory databaseType={databaseType} fixedMode="history" initialQuery={historyQuery} />
         ) : null}
 
+        {reportFor && (
+          <div className="fixed inset-0 bg-black/60 z-[60] flex items-start justify-center p-4 overflow-y-auto" onClick={() => setReportFor(null)}>
+            <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+              <PropertyReport type={reportFor.type} id={reportFor.id} onClose={() => setReportFor(null)} />
+            </div>
+          </div>
+        )}
+
         {/* Full Property Report Modal */}
         {selectedProperty && (
           <div
@@ -1850,12 +1957,28 @@ function UserDashboard() {
                     {aliasNames(selectedProperty.propertyName) || 'Insider Report'}{selectedProperty.insiderDate ? ` · reported ${selectedProperty.insiderDate}` : ''}
                   </p>
                 </div>
-                <button
-                  onClick={() => setSelectedProperty(null)}
-                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                >
-                  <X className="w-6 h-6" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openReportFor(selectedProperty, 'report')}
+                    disabled={reportBusy !== null}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-sm disabled:opacity-50"
+                  >
+                    {reportBusy === 'report' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />} One-page report
+                  </button>
+                  <button
+                    onClick={() => openReportFor(selectedProperty, 'pdf')}
+                    disabled={reportBusy !== null}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-700 text-sm hover:bg-blue-50 disabled:opacity-50"
+                  >
+                    {reportBusy === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
+                  </button>
+                  <button
+                    onClick={() => setSelectedProperty(null)}
+                    className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
               {/* Report Sections */}

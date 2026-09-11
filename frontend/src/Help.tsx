@@ -270,35 +270,41 @@ export function Help({ onExit }: { onExit?: () => void }) {
         <button onClick={() => open(null)} className="inline-flex items-center gap-1 text-gray-600 hover:text-[#0b1f5c]"><ArrowLeft className="w-4 h-4" /> All topics</button>
         {onExit && <><span className="text-gray-300">|</span><button onClick={onExit} className="text-gray-600 hover:text-[#0b1f5c]">Back to Search</button></>}
       </div>
-      <div className="flex gap-2 overflow-x-auto pb-3 mb-6 -mx-1 px-1">
-        {topics.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => open(t.id)}
-            className={`shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border transition-colors ${
-              t.id === topic.id ? 'bg-[#0b1f5c] text-white border-[#0b1f5c]' : 'bg-white text-gray-700 border-gray-200 hover:border-[#0b1f5c]/50'
-            }`}
-          >
-            <t.icon className="w-4 h-4" /> {t.title}
-          </button>
-        ))}
-      </div>
-      <div className="grid lg:grid-cols-[240px_1fr] gap-6 items-start">
-        <aside className="hidden lg:block sticky top-24 bg-white rounded-2xl border border-gray-200 p-4 text-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">In this topic</div>
-          <ul className="space-y-1">
-            {topic.sections.map((s) => (
-              <li key={s.slug}>
-                <button onClick={() => open(topic.id, s.slug)} className="text-left font-medium text-gray-800 hover:text-[#0b1f5c]">{s.title}</button>
-                {s.subs.length > 0 && (
-                  <ul className="ml-3 mt-1 space-y-0.5 border-l border-gray-200 pl-3">
-                    {s.subs.map((sub) => (
-                      <li key={sub.slug}><button onClick={() => open(topic.id, sub.slug)} className="text-left text-gray-500 hover:text-[#0b1f5c]">{sub.title}</button></li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
+      <div className="grid lg:grid-cols-[260px_1fr] gap-6 items-start">
+        <aside className="lg:sticky lg:top-24 bg-white rounded-2xl border border-gray-200 p-3 text-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-400 px-3 pt-1 pb-2">Topics</div>
+          <ul className="space-y-0.5">
+            {topics.map((t) => {
+              const active = t.id === topic.id;
+              return (
+                <li key={t.id}>
+                  <button
+                    onClick={() => open(t.id)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left font-bold transition-colors ${
+                      active ? 'bg-[#0b1f5c] text-white' : 'text-gray-800 hover:bg-gray-100'
+                    }`}
+                  >
+                    <t.icon className="w-4 h-4 shrink-0" /> {t.title}
+                  </button>
+                  {active && (
+                    <ul className="ml-5 my-1.5 space-y-1 border-l-2 border-[#0b1f5c]/20 pl-3">
+                      {t.sections.map((s) => (
+                        <li key={s.slug}>
+                          <button onClick={() => open(t.id, s.slug)} className="text-left font-medium text-gray-700 hover:text-[#0b1f5c]">{s.title}</button>
+                          {s.subs.length > 0 && (
+                            <ul className="ml-3 mt-0.5 space-y-0.5">
+                              {s.subs.map((sub) => (
+                                <li key={sub.slug}><button onClick={() => open(t.id, sub.slug)} className="text-left text-gray-500 hover:text-[#0b1f5c]">{sub.title}</button></li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </aside>
         <article className="bg-white rounded-2xl shadow-lg border border-gray-100 px-6 sm:px-10 py-8 min-w-0">

@@ -2485,7 +2485,7 @@ LOCATION FILTERS (match values EXACTLY as listed, case-sensitive):
 - counties: an ARRAY of values from ${JSON.stringify(counties)}. Include ALL variants that match the user's intent.
 - city: one of ${JSON.stringify(cities)}
 - market_area: one of ${JSON.stringify(marketAreas)}
-- zipcode: one of ${JSON.stringify(zipcodes)}
+- zipcode: one or an ARRAY of values from ${JSON.stringify(zipcodes)} (user may name several zip codes)
 - district: one of ${JSON.stringify(districts)}
 - land_lot: one of ${JSON.stringify(landLots)}
 

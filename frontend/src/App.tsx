@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare, Camera } from 'lucide-react';
+import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare, Camera, BookOpen } from 'lucide-react';
 import FeedbackWidget from './FeedbackWidget';
 import FeedbackList from './FeedbackList';
 import PhotoReview from './PhotoReview';
@@ -11,6 +11,7 @@ import LoginModal from './LoginModal';
 import DatabaseStatus from './DatabaseStatus';
 import PropertyHistory from './PropertyHistory';
 import AdminLogin from './AdminLogin';
+import Help from './Help';
 
 axios.defaults.withCredentials = true;
 
@@ -54,6 +55,8 @@ const databaseLabel = (value?: string) => {
   return option ? option.label : value || '';
 };
 
+type PublicView = 'home' | 'search' | 'help';
+
 // Customers land on / (User View only); administrators use /admin.
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
 
@@ -61,7 +64,9 @@ function App() {
   const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback' | 'photos'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [publicView, setPublicView] = useState<'home' | 'search'>(window.location.hash === '#search' ? 'search' : 'home');
+  const [publicView, setPublicView] = useState<PublicView>(
+    window.location.hash === '#search' ? 'search' : window.location.hash.startsWith('#help') ? 'help' : 'home',
+  );
   const [loginOpen, setLoginOpen] = useState(false);
 
   const goHomeSection = (id: string) => {
@@ -70,9 +75,9 @@ function App() {
     requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }));
   };
 
-  const showPublic = (v: 'home' | 'search') => {
+  const showPublic = (v: PublicView) => {
     setPublicView(v);
-    window.history.replaceState(null, '', v === 'search' ? '#search' : '/');
+    window.history.replaceState(null, '', v === 'home' ? '/' : `#${v}`);
     window.scrollTo({ top: 0 });
   };
 
@@ -310,6 +315,9 @@ function App() {
                   <a href="/" className={`flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 ${!ADMIN_ROUTE ? 'text-[#0b1f5c] font-semibold' : 'text-gray-700'}`}>
                     <Users className="w-4 h-4" /> Customer view
                   </a>
+                  <a href="/#help" onClick={(e) => { if (!ADMIN_ROUTE) { e.preventDefault(); setMenuOpen(false); showPublic('help'); } }} className={`flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 ${publicView === 'help' && !ADMIN_ROUTE ? 'text-[#0b1f5c] font-semibold' : 'text-gray-700'}`}>
+                    <BookOpen className="w-4 h-4" /> Handbook
+                  </a>
                   <a href="/admin" className={`flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 ${ADMIN_ROUTE ? 'text-[#0b1f5c] font-semibold' : 'text-gray-700'}`}>
                     <Lock className="w-4 h-4" /> {isAdmin ? 'Admin' : 'Admin login'}
                   </a>
@@ -411,7 +419,7 @@ function App() {
           <>
             <div className="flex justify-center mb-6">
               <div className="inline-flex rounded-xl bg-white shadow-md p-1 gap-1">
-                {(['home', 'search'] as const).map(v => (
+                {(['home', 'search', 'help'] as const).map(v => (
                   <button
                     key={v}
                     onClick={() => showPublic(v)}
@@ -419,12 +427,12 @@ function App() {
                       publicView === v ? 'bg-[#0b1f5c] text-white shadow' : 'text-gray-600 hover:bg-gray-100'
                     }`}
                   >
-                    {v === 'home' ? 'Home' : 'Search'}
+                    {v === 'home' ? 'Home' : v === 'search' ? 'Search' : 'Handbook'}
                   </button>
                 ))}
               </div>
             </div>
-            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : <UserDashboard />}
+            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : publicView === 'help' ? <Help /> : <UserDashboard />}
           </>
         ) : !isAdmin ? (
           isAdmin === null ? null : <AdminLogin onLogin={() => setIsAdmin(true)} />

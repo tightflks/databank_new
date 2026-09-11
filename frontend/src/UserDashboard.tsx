@@ -444,9 +444,9 @@ function UserDashboard() {
     if (selectedCity) filtered = filtered.filter(p => p.city === selectedCity);
     if (selectedCounties.length > 0) filtered = filtered.filter(p => selectedCounties.includes(p.county));
     if (selectedMarketArea) filtered = filtered.filter(p => p.marketArea === selectedMarketArea);
-    if (selectedZipcode) {
-      const targetZip = String(selectedZipcode).trim().slice(0, 5);
-      filtered = filtered.filter(p => String(p.zip || '').trim().slice(0, 5) === targetZip);
+    const zips = selectedZipcode.split(/[\s,;]+/).map((z) => z.trim().slice(0, 5)).filter(Boolean);
+    if (zips.length) {
+      filtered = filtered.filter(p => zips.includes(String(p.zip || '').trim().slice(0, 5)));
     }
     if (selectedDistrict) {
       const target = String(selectedDistrict).trim();
@@ -728,7 +728,7 @@ function UserDashboard() {
       setSelectedCity(one(f.city));
       setSelectedCounties(Array.isArray(f.counties) ? f.counties.map(String) : f.county ? [String(f.county)] : []);
       setSelectedMarketArea(one(f.market_area));
-      setSelectedZipcode(one(f.zipcode));
+      setSelectedZipcode(Array.isArray(f.zipcode) ? f.zipcode.map(String).join(', ') : one(f.zipcode));
       setSelectedDistrict(one(f.district));
       setSelectedLandLot(one(f.land_lot));
       setSelectedSeller(one(f.seller));
@@ -1678,7 +1678,7 @@ function UserDashboard() {
                 type="text"
                 value={selectedZipcode}
                 onChange={(e) => setSelectedZipcode(e.target.value)}
-                placeholder="Zip code..."
+                placeholder="Zip codes, e.g. 30305, 30309"
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>

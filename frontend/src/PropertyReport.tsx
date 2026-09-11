@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Loader2, AlertCircle, X, FileDown } from 'lucide-react';
 import { fmtDate, titleCase } from './utils/fmt';
+import { downloadReportPdf } from './utils/reportPdf';
 
 // Customer-readable report for one property (Ask AI "Report" button). Plain
 // words, no Reflex field names: what it is, who owns it, who owned it before,
@@ -44,13 +45,7 @@ export function PropertyReport({ type, id, onClose }: { type: string; id: string
     if (downloading || !r) return;
     setDownloading(true);
     try {
-      const res = await axios.get(`${API_URL}/api/dropbox/report.pdf`, { params: { type, id }, responseType: 'blob' });
-      const url = URL.createObjectURL(res.data as Blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `databank-${(r.name || r.id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      await downloadReportPdf(type, id, r.name);
     } catch (e) {
       console.error('PDF failed:', e);
       alert('Could not build the PDF. Please try again.');

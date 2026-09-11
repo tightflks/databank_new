@@ -66,7 +66,7 @@ About (Alan Wexler), and a Contact form that emails the team.
   Research Database.
 - **Search the database** (white button in the hero) and **Research Database** in the top nav
   do the same thing.
-- The ☰ button at top right opens the menu (see §14).
+- The ☰ button at top right opens the menu (§14).
 
 <details><summary>Full Home page</summary>
 
@@ -220,7 +220,8 @@ the same property across *all* weekly files, not just this week.
 
 - Header: name, address, county, parcel; **In the current file** badge if it is in this
   week's list.
-- Tiles: **Units**, **Last sale**, **Owner on record since**, **Tracked by Databank since**.
+- Tiles: **Units**, **Last sale**, **Owners on record since** (the first weekly file the
+  property appears in — the archive starts Aug 2022).
 - **Owners** and **Sales** lists (one line per real change; one-week typos are ignored).
 - **What changed, week by week** — a change log of the headline fields; tick
   **every field** to see all ~100.
@@ -315,7 +316,7 @@ The ☰ button at top right:
 ![Menu](images/13-menu.png)
 
 - **Customer view** — the public site (what this guide covers).
-- **Handbook** — this guide as topic cards on the site itself (see §18).
+- **Handbook** — this guide as topic cards on the site itself (§18).
 - **Admin login** — `https://databanknew-production.up.railway.app/admin`, password
   protected.
 - **databankinfo.com** — the existing Databank website.
@@ -374,10 +375,6 @@ automatically when Databank drops the zip in Dropbox.
 week's list (all properties currently tracked); an Ask AI archive answer shows only the
 records that match the question.
 
-**What is "Tracked by Databank since Aug 4, 2022"?** The first weekly file the property
-appears in — it is the start of the archive, not the date the property was built or
-bought.
-
 **How do I ask about several zip codes?** In the Zip filter: `30305, 30309`. In Ask AI:
 "sold in 30305 or 30309 since 2024".
 
@@ -402,8 +399,8 @@ read it without leaving the browser: ☰ menu → **Handbook**, or
 
 ![Handbook topic](images/16b-handbook-topic.png)
 
-- It is the same document as `docs/walkthrough.md` in the repository, rendered live — any
-  edit to the Markdown file shows up on the site at the next deploy, no separate copy to
-  maintain. Sections are grouped into topics by their number (§1–3 → Getting started, etc.).
+- The site renders `docs/handbook.md` — a customer-facing version of this guide (no admin,
+  demo or internal notes). Edit that file to change the Handbook; it shows up at the next
+  deploy. Sections are grouped into topics by their number.
 - A topic or section can be linked directly, e.g. `/#help/ask-ai` or
   `/#help/5-ask-ai--questions-in-plain-english`.

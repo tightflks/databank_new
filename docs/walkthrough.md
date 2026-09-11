@@ -28,6 +28,7 @@ the words should still hold.
 15. [Demo script (10 minutes)](#15-demo-script-10-minutes)
 16. [What to avoid in a demo / known limits](#16-what-to-avoid-in-a-demo--known-limits)
 17. [FAQ](#17-faq)
+18. [Handbook on the site](#18-handbook-on-the-site)
 
 ---
 
@@ -61,8 +62,8 @@ The public front page, aligned with databankinfo.com: hero, headline numbers, th
 **Latest Insider Week** market pulse (live from the data), Services, Valued Customers,
 About (Alan Wexler), and a Contact form that emails the team.
 
-- The **Home / Search** toggle under the header switches between the public page and the
-  Research Database.
+- The **Home / Search / Handbook** toggle under the header switches between the public page,
+  the Research Database and this guide.
 - **Search the database** (white button in the hero) and **Research Database** in the top nav
   do the same thing.
 - The ☰ button at top right opens the menu (see §14).
@@ -314,6 +315,7 @@ The ☰ button at top right:
 ![Menu](images/13-menu.png)
 
 - **Customer view** — the public site (what this guide covers).
+- **Handbook** — this guide, on the site itself (see §18).
 - **Admin login** — `https://databanknew-production.up.railway.app/admin`, password
   protected.
 - **databankinfo.com** — the existing Databank website.
@@ -380,3 +382,22 @@ bought.
 "sold in 30305 or 30309 since 2024".
 
 **Can I save a search?** Not yet. Export it to Excel, or bookmark the question for Ask AI.
+
+---
+
+## 18. Handbook on the site
+
+This guide is also published on the site itself, so Blake, customers and anyone demoing can
+read it without leaving the browser:
+
+`https://databanknew-production.up.railway.app/#help`
+
+![Handbook](images/16-handbook.png)
+
+- Open it from the **Handbook** button in the Home / Search / Handbook toggle, or from the
+  ☰ menu → **Handbook**.
+- It is the same document as `docs/walkthrough.md` in the repository, rendered live — any
+  edit to the Markdown file shows up on the site at the next deploy, no separate copy to
+  maintain.
+- The **Contents** links jump within the page; a section can be linked directly, e.g.
+  `/#help/5-ask-ai--questions-in-plain-english`.

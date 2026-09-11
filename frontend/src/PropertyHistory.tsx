@@ -185,7 +185,7 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-blue-50 rounded-xl p-4">
           <div className="text-2xl font-bold text-gray-900">{fmtValue(sizeField, p.current[sizeField] ?? '')}</div>
           <div className="text-xs text-gray-600">{sizeField === 'UNITS COMPLETED:' ? 'Units' : sizeField === '# SQ FT BUILT' ? 'SF built' : 'Acres'}</div>
@@ -197,10 +197,6 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
         <div className="bg-purple-50 rounded-xl p-4">
           <div className="text-2xl font-bold text-gray-900">{owners.length}</div>
           <div className="text-xs text-gray-600">Owner{owners.length === 1 ? '' : 's'} on record since {fmtDate(p.first)}</div>
-        </div>
-        <div className="bg-orange-50 rounded-xl p-4">
-          <div className="text-2xl font-bold text-gray-900">{fmtDate(p.first)}</div>
-          <div className="text-xs text-gray-600">Tracked by Databank since</div>
         </div>
       </div>
 

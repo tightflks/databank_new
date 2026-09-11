@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BookOpen, Loader2, Rocket, Search, Sparkles, History, FileText, BarChart3, Settings, Presentation, HelpCircle, ChevronLeft, ChevronRight, ArrowLeft, type LucideIcon } from 'lucide-react';
+import { BookOpen, Loader2, Rocket, Search, Sparkles, History, FileText, BarChart3, MessageSquare, HelpCircle, ChevronLeft, ChevronRight, ArrowLeft, type LucideIcon } from 'lucide-react';
 
 // Renders docs/walkthrough.md (served from /help/ via the public folder) as the
 // site's handbook. Small purpose-built markdown subset: headings, paragraphs,
 // bullets, numbered lists, tables, images, block quotes, <details>, hr, and
 // inline **bold**, *italic*, `code`, [links](...).
 
-const DOC_URL = '/help/walkthrough.md';
+const DOC_URL = '/help/handbook.md';
+
+// "§9" cross-references in the Markdown become links to that section.
+const sectionIndex = new Map<number, { title: string; slug: string }>();
+let goToSection: (slug: string) => void = () => undefined;
 
 function slug(text: string) {
   return text.toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/ /g, '-');
@@ -14,7 +18,7 @@ function slug(text: string) {
 
 function inline(text: string, key = 0): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|(?<!\*)\*(?!\*)[^*]+\*(?!\*))/g;
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|(?<!\*)\*(?!\*)[^*]+\*(?!\*)|§\d+(?![–\d]))/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = key;
@@ -29,6 +33,11 @@ function inline(text: string, key = 0): ReactNode[] {
       out.push(href.startsWith('#')
         ? <a key={i++} href={href} onClick={(e) => { e.preventDefault(); document.getElementById(href.slice(1))?.scrollIntoView({ behavior: 'smooth' }); }} className="text-blue-700 underline">{mm[1]}</a>
         : <a key={i++} href={href} target="_blank" rel="noreferrer" className="text-blue-700 underline">{mm[1]}</a>);
+    } else if (t.startsWith('§')) {
+      const sec = sectionIndex.get(Number(t.slice(1)));
+      out.push(sec
+        ? <button key={i++} type="button" onClick={() => goToSection(sec.slug)} className="inline-flex items-center align-baseline mx-0.5 px-1.5 rounded bg-blue-50 text-blue-700 text-[0.85em] font-medium hover:bg-blue-100">{sec.title} →</button>
+        : t);
     } else out.push(<em key={i++}>{t.slice(1, -1)}</em>);
     last = m.index + t.length;
   }
@@ -118,15 +127,14 @@ interface Section { num: number; title: string; slug: string; subs: { title: str
 interface Topic { id: string; title: string; blurb: string; icon: LucideIcon; nums: number[] }
 
 const TOPICS: Topic[] = [
-  { id: 'getting-started', title: 'Getting started', blurb: 'What the site is, the Home page, and getting in', icon: Rocket, nums: [1, 2, 3] },
-  { id: 'search', title: 'Search & Filters', blurb: 'The Search screen, quick find, filters, multiple zips', icon: Search, nums: [4, 6] },
-  { id: 'ask-ai', title: 'Ask AI', blurb: 'Questions in plain English and what you get back', icon: Sparkles, nums: [5] },
-  { id: 'properties', title: 'Properties & History', blurb: 'The row card and the clock — every owner and sale', icon: History, nums: [7, 8] },
-  { id: 'reports', title: 'Reports & Export', blurb: 'One-page report, PDF download, Excel export', icon: FileText, nums: [9, 10] },
-  { id: 'dashboard', title: 'Dashboard & Weekly Reports', blurb: 'Market numbers, drill-down, snapshot PDF, Insider Reports', icon: BarChart3, nums: [11, 12] },
-  { id: 'admin', title: 'Feedback, Menu & Admin', blurb: 'Feedback button, ☰ menu, admin tools, photos, this handbook', icon: Settings, nums: [13, 14, 18] },
-  { id: 'demo', title: 'Demo guide', blurb: '10-minute script and what to steer away from', icon: Presentation, nums: [15, 16] },
-  { id: 'faq', title: 'FAQ', blurb: 'Short answers to the questions customers ask', icon: HelpCircle, nums: [17] },
+  { id: 'welcome', title: 'Welcome', blurb: 'What the Research Database is and how to get in', icon: Rocket, nums: [1] },
+  { id: 'search', title: 'Search & Filters', blurb: 'The Search screen, quick find, filters, several zip codes', icon: Search, nums: [2, 4] },
+  { id: 'ask-ai', title: 'Ask AI', blurb: 'Ask in plain English, get a one-sentence answer', icon: Sparkles, nums: [3] },
+  { id: 'properties', title: 'Properties & History', blurb: 'The property card and the clock — every owner and sale', icon: History, nums: [5, 6] },
+  { id: 'reports', title: 'Reports & Excel', blurb: 'One-page report, PDF with letterhead, Excel export', icon: FileText, nums: [7] },
+  { id: 'dashboard', title: 'Dashboard & Weekly Reports', blurb: 'Market numbers, drill-down, Market Snapshot PDF', icon: BarChart3, nums: [8] },
+  { id: 'feedback', title: 'Feedback', blurb: 'Tell us what to fix or add', icon: MessageSquare, nums: [9] },
+  { id: 'faq', title: 'FAQ', blurb: 'Quick answers to common questions', icon: HelpCircle, nums: [10] },
 ];
 
 function parseSections(md: string): Section[] {
@@ -137,6 +145,7 @@ function parseSections(md: string): Section[] {
     if (h2) {
       cur = { num: Number(h2[1]), title: h2[2], slug: slug(`${h2[1]}. ${h2[2]}`), subs: [], md: '' };
       out.push(cur);
+      sectionIndex.set(cur.num, { title: cur.title, slug: cur.slug });
       continue;
     }
     if (!cur) continue;
@@ -167,6 +176,13 @@ export function Help({ onExit }: { onExit?: () => void }) {
     () => TOPICS.map((t) => ({ ...t, sections: sections.filter((s) => t.nums.includes(s.num)) })).filter((t) => t.sections.length),
     [sections],
   );
+
+  const openSection = (sectionSlug: string) => {
+    const num = Number(/^(\d+)-/.exec(sectionSlug)?.[1]);
+    const t = topics.find((t) => t.nums.includes(num));
+    if (t) open(t.id, sectionSlug);
+  };
+  goToSection = openSection;
 
   const open = (id: string | null, sectionSlug?: string) => {
     setTopicId(id);
@@ -203,18 +219,27 @@ export function Help({ onExit }: { onExit?: () => void }) {
   if (!topic) {
     return (
       <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-[#0b1f5c] mb-3">
-            <BookOpen className="w-4 h-4" /> Handbook
+        <div className="relative overflow-hidden rounded-3xl text-white px-8 py-12 sm:py-16 mb-10 text-center shadow-xl" style={{ background: 'linear-gradient(135deg, #0b1f5c 0%, #1e3a8a 60%, #2563eb 100%)' }}>
+          <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-white/10" />
+          <div className="absolute -bottom-20 -left-10 w-72 h-72 rounded-full bg-white/5" />
+          <div className="relative">
+            <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-blue-200 mb-4">
+              <BookOpen className="w-4 h-4" /> Handbook
+            </div>
+            <h1 className="text-3xl sm:text-5xl font-bold tracking-tight">Welcome to the Research Database</h1>
+            <p className="mt-4 text-blue-100 max-w-2xl mx-auto text-base sm:text-lg">
+              50 years of Atlanta commercial real estate, searchable in plain English. Pick a topic below — each one is a short, illustrated guide.
+            </p>
+            {onExit && (
+              <button onClick={onExit} className="mt-8 inline-flex items-center gap-2 bg-white text-[#0b1f5c] font-semibold px-6 py-3 rounded-full shadow hover:bg-blue-50 transition-colors">
+                <Search className="w-4 h-4" /> Open the database
+              </button>
+            )}
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">How to use the Research Database</h1>
-          <p className="mt-3 text-gray-600 max-w-2xl mx-auto">
-            Pick a topic. Each one is a short, illustrated guide — no knowledge of property data needed.
-          </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {topics.map((t) => (
-            <div key={t.id} className="group bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md hover:border-[#0b1f5c]/40 transition-all p-5 flex flex-col">
+            <div key={t.id} className="group bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-[#0b1f5c]/40 transition-all p-6 flex flex-col">
               <button onClick={() => open(t.id)} className="text-left">
                 <div className="w-11 h-11 rounded-xl bg-[#0b1f5c]/5 text-[#0b1f5c] flex items-center justify-center mb-3 group-hover:bg-[#0b1f5c] group-hover:text-white transition-colors">
                   <t.icon className="w-5 h-5" />

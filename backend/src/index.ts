@@ -745,9 +745,12 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
   const sales = [...r.saleList].reverse();
   const owners = [...r.ownerTrail].reverse();
   const isMoney = (label: string) => /price/i.test(label);
-  const facts = r.facts.map((f) => `<div class="fact"><div class="k">${esc(f.label)}</div><div class="v">${esc(isMoney(f.label) ? money(f.value) : num(f.value))}</div></div>`).join('');
+  const facts = r.facts.map((f) => `<div class="fact"><div class="k">${esc(f.label)}</div><div class="v">${esc(isMoney(f.label) ? money(f.value) : /built/i.test(f.label) ? f.value : num(f.value))}</div></div>`).join('');
+  const sameOwner = !!last && !!last.buyer && last.buyer.toUpperCase() === last.seller.toUpperCase();
   const lede = last
-    ? `${esc(r.name)} last sold on ${esc(longDate(last.date))}${last.price ? ` for ${money(last.price)}` : ' (price not on record)'}${last.buyer ? ` to ${esc(last.buyer)}` : ''}${last.seller ? `, purchased from ${esc(last.seller)}` : ''}. ` +
+    ? (sameOwner
+      ? `${esc(r.name)} was last recorded on ${esc(longDate(last.date))}${last.price ? ` at ${money(last.price)}` : ''}, staying with ${esc(last.buyer)} (a transfer or refinancing, not a change of owner). `
+      : `${esc(r.name)} last sold on ${esc(longDate(last.date))}${last.price ? ` for ${money(last.price)}` : ' (price not on record)'}${last.buyer ? ` to ${esc(last.buyer)}` : ''}${last.seller ? `, purchased from ${esc(last.seller)}` : ''}. `) +
       (r.saleList.length > 1 ? `Databank has ${r.saleList.length} sales on record for this property. ` : '') +
       (owners.length > 1 ? `It has had ${owners.length} owners since Databank started tracking it in ${longDate(r.first)}.` : '')
     : `${esc(r.name)} is owned by ${esc(r.owner || 'an unrecorded owner')}. Databank has no sale on record for it.`;
@@ -2353,7 +2356,10 @@ async function summarizeHistoryAnswer(apiKey: string, question: string, answer: 
   if (!items.length) return null;
   const digest = items.slice(0, 15).map((it) => {
     if ('count' in it) return { name: it.name, properties_count: it.count };
-    const sales = Array.isArray(it.saleList) ? (it.saleList as Record<string, string>[]).map((s) => ({ date: s.date, price: s.price, seller: s.seller, buyer: s.buyer })) : [];
+    const sales = Array.isArray(it.saleList) ? (it.saleList as Record<string, string>[]).map((s) => ({
+      date: s.date, price: s.price, seller: s.seller, buyer: s.buyer,
+      ...(s.buyer && s.seller && s.buyer.toUpperCase() === s.seller.toUpperCase() ? { same_owner_transfer: true } : {}),
+    })) : [];
     const owners = Array.isArray(it.ownerTrail) ? (it.ownerTrail as Record<string, string>[]).map((o) => o.value) : [];
     return {
       name: it.name, address: it.address, city: it.city, county: it.county, size: it.size,
@@ -2366,7 +2372,7 @@ async function summarizeHistoryAnswer(apiKey: string, question: string, answer: 
     period: { after: answer.after, before: answer.before, archive_from: answer.firstWeek, archive_to: answer.latestWeek },
     total_matches: answer.total, shown: digest.length, records: digest,
   };
-  const system = `You are Databank Atlanta's research analyst. Answer the customer's question in plain English in 1-3 short sentences, using ONLY the facts in the JSON. Prices are in US dollars: write them like $12.5M or $850,000. Dates like "Aug 2022". Name the property/owner/seller exactly as written (title case is fine). If several records match, answer for the best match first and mention how many others there are. If the facts don't contain what was asked (e.g. no sale price), say so plainly instead of guessing. If a record has "dropped_off", note it is no longer on the list. No preamble, no bullet points, no markdown.`;
+  const system = `You are Databank Atlanta's research analyst. Answer the customer's question in plain English in 1-3 short sentences, using ONLY the facts in the JSON. Prices are in US dollars: write them like $12.5M or $850,000. Dates like "Aug 2022". Name the property/owner/seller exactly as written (title case is fine). Each record's "sales" are in date order, oldest first: the LAST entry is the most recent sale — never call an earlier one the latest. A sale marked same_owner_transfer stayed with the same owner (refinance/internal transfer): still report it as the latest record (e.g. "most recently recorded at $18M in May 2026, staying with X"). If several records match, answer for the best match first and state the exact total_matches count (e.g. "18 properties"), not a smaller number. If the facts don't contain what was asked (e.g. no sale price), say so plainly instead of guessing. If a record has "dropped_off", note it is no longer on the list. No preamble, no bullet points, no markdown.`;
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

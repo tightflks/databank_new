@@ -1513,7 +1513,7 @@ function UserDashboard() {
               <AskCatalogue onPick={(q) => setAiQuery(q)} />
             </div>
 
-            {aiHistory && <HistoryResults answer={aiHistory} asked={aiAsked} onClose={() => setAiHistory(null)} />}
+            {aiHistory && <HistoryResults key={`${aiAsked ?? ''}|${aiHistory.question}|${aiHistory.total}`} answer={aiHistory} asked={aiAsked} onClose={() => setAiHistory(null)} />}
 
             {aiHistory && !browseWithAnswer ? (
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">

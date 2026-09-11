@@ -215,7 +215,8 @@ async function exportHistory(answer: HistoryAnswer, asked?: string) {
 }
 
 export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnswer; asked?: string; onClose: () => void }) {
-  const single = answer.question === 'property_history' && answer.items.length === 1 && !isRanked(answer.items[0]) ? (answer.items[0] as AskItem).id : null;
+  const live = answer.question === 'property_history' ? answer.items.filter((it) => !isRanked(it) && !(it as AskItem).removed) : [];
+  const single = live.length === 1 ? (live[0] as AskItem).id : null;
   const [open, setOpen] = useState<string | null>(single);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showRecords, setShowRecords] = useState(!answer.summary && !single);

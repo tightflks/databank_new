@@ -339,8 +339,10 @@ function salesOf(p: Stored): Sale[] {
   const dateField = land ? 'LAND SALE DATE' : 'SALE DATE';
   const priceField = land ? 'LAND SALE PRICE' : 'SALE PRICE';
   // the record can flip back to an earlier date (numbered-copy weeks); keep the first sighting of each date
+  // a date that is undone at the next sighting (record flips straight back) was a typo, not a sale
+  const trail = trailOf(p, dateField).filter((d, i, a) => !(i > 0 && i + 1 < a.length && a[i + 1].value === a[i - 1].value));
   const seen = new Set<string>();
-  const dates = trailOf(p, dateField).filter((d) => !seen.has(d.value) && seen.add(d.value));
+  const dates = trail.filter((d) => !seen.has(d.value) && seen.add(d.value));
   return dates.map((d) => ({
     week: d.week,
     date: d.value,

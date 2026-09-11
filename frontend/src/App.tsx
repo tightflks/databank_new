@@ -419,7 +419,7 @@ function App() {
           <>
             <div className="flex justify-center mb-6">
               <div className="inline-flex rounded-xl bg-white shadow-md p-1 gap-1">
-                {(['home', 'search', 'help'] as const).map(v => (
+                {(['home', 'search'] as const).map(v => (
                   <button
                     key={v}
                     onClick={() => showPublic(v)}
@@ -427,12 +427,12 @@ function App() {
                       publicView === v ? 'bg-[#0b1f5c] text-white shadow' : 'text-gray-600 hover:bg-gray-100'
                     }`}
                   >
-                    {v === 'home' ? 'Home' : v === 'search' ? 'Search' : 'Handbook'}
+                    {v === 'home' ? 'Home' : 'Search'}
                   </button>
                 ))}
               </div>
             </div>
-            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : publicView === 'help' ? <Help /> : <UserDashboard />}
+            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : publicView === 'help' ? <Help onExit={() => showPublic('search')} /> : <UserDashboard />}
           </>
         ) : !isAdmin ? (
           isAdmin === null ? null : <AdminLogin onLogin={() => setIsAdmin(true)} />

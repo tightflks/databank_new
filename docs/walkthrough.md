@@ -62,8 +62,8 @@ The public front page, aligned with databankinfo.com: hero, headline numbers, th
 **Latest Insider Week** market pulse (live from the data), Services, Valued Customers,
 About (Alan Wexler), and a Contact form that emails the team.
 
-- The **Home / Search / Handbook** toggle under the header switches between the public page,
-  the Research Database and this guide.
+- The **Home / Search** toggle under the header switches between the public page and the
+  Research Database.
 - **Search the database** (white button in the hero) and **Research Database** in the top nav
   do the same thing.
 - The ☰ button at top right opens the menu (see §14).
@@ -315,7 +315,7 @@ The ☰ button at top right:
 ![Menu](images/13-menu.png)
 
 - **Customer view** — the public site (what this guide covers).
-- **Handbook** — this guide, on the site itself (see §18).
+- **Handbook** — this guide as topic cards on the site itself (see §18).
 - **Admin login** — `https://databanknew-production.up.railway.app/admin`, password
   protected.
 - **databankinfo.com** — the existing Databank website.
@@ -388,16 +388,22 @@ bought.
 ## 18. Handbook on the site
 
 This guide is also published on the site itself, so Blake, customers and anyone demoing can
-read it without leaving the browser:
-
-`https://databanknew-production.up.railway.app/#help`
+read it without leaving the browser: ☰ menu → **Handbook**, or
+`https://databanknew-production.up.railway.app/#help`.
 
 ![Handbook](images/16-handbook.png)
 
-- Open it from the **Handbook** button in the Home / Search / Handbook toggle, or from the
-  ☰ menu → **Handbook**.
+- The Handbook opens as a set of **topic cards** (Getting started, Search & Filters, Ask AI,
+  Properties & History, Reports & Export, Dashboard & Weekly Reports, Feedback/Menu/Admin,
+  Demo guide, FAQ). Tap a card — or one of the links on it — to open that topic.
+- Inside a topic, the **topic tabs** across the top toggle between topics without going back
+  to the cards; the **In this topic** panel on the left jumps to a section; **Previous /
+  Next** at the bottom walk through the guide in order. Only one topic shows at a time.
+
+![Handbook topic](images/16b-handbook-topic.png)
+
 - It is the same document as `docs/walkthrough.md` in the repository, rendered live — any
   edit to the Markdown file shows up on the site at the next deploy, no separate copy to
-  maintain.
-- The **Contents** links jump within the page; a section can be linked directly, e.g.
+  maintain. Sections are grouped into topics by their number (§1–3 → Getting started, etc.).
+- A topic or section can be linked directly, e.g. `/#help/ask-ai` or
   `/#help/5-ask-ai--questions-in-plain-english`.

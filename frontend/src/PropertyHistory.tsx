@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Loader2, AlertCircle, X, ExternalLink, Clock, FileSpreadsheet } from 'lucide-react';
+import { Loader2, AlertCircle, X, ExternalLink, Clock, FileSpreadsheet, FileText, FileDown } from 'lucide-react';
+import { PropertyReport } from './PropertyReport';
+import { downloadReportPdf } from './utils/reportPdf';
 
 // Property Search over the Dropbox archive of weekly Reflex files.
 //   Properties   — one record per property across every synced week: current
@@ -107,10 +109,13 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
   const [p, setP] = useState<PropertyDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [all, setAll] = useState(false);
+  const [report, setReport] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     const ctrl = new AbortController();
     setP(null);
+    setReport(false);
     setError(null);
     axios
       .get<PropertyDetail>(`${API_URL}/api/dropbox/properties`, { params: { type, id }, signal: ctrl.signal })
@@ -128,6 +133,21 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
       <div className="flex items-center gap-2 text-gray-500 py-6 justify-center"><Loader2 className="w-5 h-5 animate-spin" /> Loading history…</div>
     );
   }
+
+  if (report) return <PropertyReport type={type} id={id} onClose={() => setReport(false)} />;
+
+  const downloadPdf = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      await downloadReportPdf(type, id, p.name);
+    } catch (e) {
+      console.error('PDF failed:', e);
+      alert('Could not build the PDF. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const owners = trail(p, p.current['TAX OWNER'] !== undefined || p.events.some((e) => e[1] === 'TAX OWNER') ? 'TAX OWNER' : 'OWNER');
   const saleDates = sales(p);
@@ -155,6 +175,12 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
           <span className={`px-3 py-1 rounded-full text-xs font-semibold ${p.removed ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
             {p.removed ? `Dropped ${fmtDate(p.last)}` : 'In the current file'}
           </span>
+          <button onClick={() => setReport(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-sm hover:bg-blue-100">
+            <FileText className="w-4 h-4" /> One-page report
+          </button>
+          <button onClick={downloadPdf} disabled={downloading} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50">
+            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
+          </button>
           <button className="p-2 rounded-lg hover:bg-gray-100 text-gray-500" onClick={onClose} aria-label="Close"><X className="w-5 h-5" /></button>
         </div>
       </div>

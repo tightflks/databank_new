@@ -343,6 +343,16 @@ function embeddedFontCss(): string {
   return fontCssCache;
 }
 
+let logoCache: string | null = null;
+function reportBrand(): string {
+  if (logoCache === null) {
+    const p = path.join(__dirname, '../fonts/databank-logo.png');
+    logoCache = fs.existsSync(p) ? `<img class="logo" src="data:image/png;base64,${fs.readFileSync(p).toString('base64')}" alt="Databank">` : '<b>DATABANK ATLANTA</b>';
+  }
+  return logoCache;
+}
+const BRAND_CSS = '.brand .logo { height: 34px; display: block; }';
+
 function generatePropertyReportHTML(properties: any[], fieldMapping: any): string {
   const formatCurrency = (value: string) => {
     if (!value) return '-';
@@ -757,7 +767,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     ${embeddedFontCss()}
     * { box-sizing: border-box; } body { font-family: Inter, Arial, sans-serif; color: #111827; margin: 0; padding: 40px 44px; font-size: 12.5px; line-height: 1.5; }
-    .brand { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 18px; }
+    .brand { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 18px; } ${BRAND_CSS}
     .brand b { font-size: 15px; color: #1e3a8a; letter-spacing: .04em; } .brand span { color: #6b7280; font-size: 11px; }
     h1 { font-size: 24px; margin: 0 0 2px; } .sub { color: #4b5563; margin-bottom: 4px; } .former { color: #6b7280; font-size: 11.5px; margin-bottom: 14px; }
     .lede { background: #eff6ff; border-left: 4px solid #1e3a8a; padding: 10px 14px; font-size: 14px; margin: 14px 0 20px; }
@@ -767,7 +777,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
     td { padding: 6px 8px 6px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; } td.n { white-space: nowrap; } .muted { color: #6b7280; } .tag { font-size: 10.5px; color: #92400e; background: #fef3c7; border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
     .foot { margin-top: 28px; color: #6b7280; font-size: 10.5px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
   </style></head><body>
-    <div class="brand"><b>DATABANK ATLANTA</b><span>Property report · ${esc(longDate(new Date().toISOString().slice(0, 10)))}</span></div>
+    <div class="brand">${reportBrand()}<span>Property report · ${esc(longDate(new Date().toISOString().slice(0, 10)))}</span></div>
     <h1>${esc(r.name || '(unnamed property)')}${r.removed ? `<span class="tag">no longer on the current list</span>` : ''}</h1>
     <div class="sub">${esc(where)}${r.parcel ? ` · Parcel ${esc(r.parcel)}` : ''}</div>
     ${r.formerNames.length ? `<div class="former">Formerly known as ${esc(r.formerNames.join(', '))}</div>` : ''}
@@ -834,7 +844,7 @@ function snapshotHtml(s: Snapshot): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     ${embeddedFontCss()}
     * { box-sizing: border-box; } body { font-family: Inter, Arial, sans-serif; color: #111827; margin: 0; padding: 40px 44px; font-size: 12px; line-height: 1.45; }
-    .brand { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 18px; }
+    .brand { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 18px; } ${BRAND_CSS}
     .brand b { font-size: 15px; color: #1e3a8a; letter-spacing: .04em; } .brand span { color: #6b7280; font-size: 11px; }
     h1 { font-size: 22px; margin: 0 0 2px; } .sub { color: #4b5563; margin-bottom: 16px; }
     .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 8px; } .tile { background: #eff6ff; border-radius: 10px; padding: 10px 12px; }
@@ -845,7 +855,7 @@ function snapshotHtml(s: Snapshot): string {
     .muted { color: #6b7280; font-size: 10.5px; margin: 0 0 4px; }
     .foot { margin-top: 24px; color: #6b7280; font-size: 10.5px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
   </style></head><body>
-    <div class="brand"><b>DATABANK ATLANTA</b><span>Market snapshot · ${esc(longDate(new Date().toISOString().slice(0, 10)))}</span></div>
+    <div class="brand">${reportBrand()}<span>Market snapshot · ${esc(longDate(new Date().toISOString().slice(0, 10)))}</span></div>
     <h1>${esc(s.database)} — ${esc(s.scope || 'All properties')}</h1>
     <div class="sub">${esc(s.period)}</div>
     ${tiles ? `<div class="tiles">${tiles}</div>` : ''}

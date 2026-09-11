@@ -2353,7 +2353,16 @@ const CORE_COLUMNS = new Set([
 // price and name in the text is one that is also in the table beneath it.
 async function summarizeHistoryAnswer(apiKey: string, question: string, answer: Record<string, unknown>): Promise<string | null> {
   const items = Array.isArray(answer.items) ? (answer.items as Record<string, unknown>[]) : [];
-  if (!items.length) return null;
+  const monthYear = (d: unknown) => (typeof d === 'string' && /^\d{4}-\d{2}/.test(d) ? new Date(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, 15).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : null);
+  if (!items.length) {
+    const oldest = typeof answer.oldestSale === 'string' ? answer.oldestSale : '';
+    const tooEarly = !!oldest && typeof answer.before === 'string' && answer.before < oldest;
+    const reach = [
+      oldest && `the earliest sale date on record is ${monthYear(oldest)}`,
+      answer.firstWeek && `the weekly archive covers ${monthYear(answer.firstWeek)} to ${monthYear(answer.latestWeek)}`,
+    ].filter(Boolean).join(', and ');
+    return `No matching records${answer.after || answer.before ? ' in that period' : ''}.${reach ? ` ${tooEarly ? "Databank's data does not go back that far: " : ''}${reach}.` : ''}`;
+  }
   const digest = items.slice(0, 15).map((it) => {
     if ('count' in it) return { name: it.name, properties_count: it.count };
     const sales = Array.isArray(it.saleList) ? (it.saleList as Record<string, string>[]).map((s) => ({
@@ -2369,10 +2378,10 @@ async function summarizeHistoryAnswer(apiKey: string, question: string, answer: 
   });
   const facts = {
     question_type: answer.question, subject: answer.subject, entity: answer.entity, field: answer.field,
-    period: { after: answer.after, before: answer.before, archive_from: answer.firstWeek, archive_to: answer.latestWeek },
+    period: { after: answer.after, before: answer.before, archive_from: answer.firstWeek, archive_to: answer.latestWeek, earliest_sale_date_in_database: answer.oldestSale },
     total_matches: answer.total, shown: digest.length, records: digest,
   };
-  const system = `You are Databank Atlanta's research analyst. Answer the customer's question in plain English in 1-3 short sentences, using ONLY the facts in the JSON. Prices are in US dollars: write them like $12.5M or $850,000. Dates like "Aug 2022". Name the property/owner/seller exactly as written (title case is fine). Each record's "sales" are in date order, oldest first: the LAST entry is the most recent sale — never call an earlier one the latest. A sale marked same_owner_transfer stayed with the same owner (refinance/internal transfer): still report it as the latest record (e.g. "most recently recorded at $18M in May 2026, staying with X"). If several records match, answer for the best match first and state the exact total_matches count (e.g. "18 properties"), not a smaller number. If the facts don't contain what was asked (e.g. no sale price), say so plainly instead of guessing. If a record has "dropped_off", note it is no longer on the list. No preamble, no bullet points, no markdown.`;
+  const system = `You are Databank Atlanta's research analyst. Answer the customer's question in plain English in 1-3 short sentences, using ONLY the facts in the JSON. Prices are in US dollars: write them like $12.5M or $850,000. Dates like "Aug 2022". Name the property/owner/seller exactly as written (title case is fine). Each record's "sales" are in date order, oldest first: the LAST entry is the most recent sale — never call an earlier one the latest. A sale marked same_owner_transfer stayed with the same owner (refinance/internal transfer): still report it as the latest record (e.g. "most recently recorded at $18M in May 2026, staying with X"). If several records match, answer for the best match first and state the exact total_matches count (e.g. "18 properties"), not a smaller number. If the facts don't contain what was asked (e.g. no sale price), say so plainly instead of guessing. If a record has "dropped_off", note it is no longer on the list. If the customer asks how far back the data goes, or asks about a period earlier than earliest_sale_date_in_database, tell them that date and the archive_from week. For question_type sold_once the records are in date order, oldest sale first. No preamble, no bullet points, no markdown.`;
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -2457,6 +2466,7 @@ There are TWO kinds of questions. Decide first, and set "mode":
     property_history = who owned / bought / sold / paid for a NAMED property, its previous owners, sale history, what changed on it (set subject)
     entity_history   = everything a company or person has bought or sold over time (set entity). Prefer this over mode current when the user says "ever", "history", "over the years", "since <year>"
     repeat_sales     = properties that sold / traded more than once, flipped
+    sold_once        = properties sold in a period and NOT sold again since ("never resold", "still held"); also "how far back does the data go" / "oldest sales" (oldest first)
     changes          = records that changed in a period; set field to a column name (e.g. "SALE PRICE", "TAX OWNER", "UNITS COMPLETED:") when the user asks about one kind of change
     new              = properties added to the database / first published in a period
     removed          = properties that dropped off / were removed from the list in a period
@@ -2465,7 +2475,7 @@ There are TWO kinds of questions. Decide first, and set "mode":
 - subject: the property as the user named it (name, address or parcel number) — for property_history
 - entity: the company / person — for entity_history
 - field: column name — for changes
-- after / before: ISO dates (YYYY-MM-DD) bounding the period, when the user gives one ("since 2024" -> after 2024-01-01; "in 2023" -> both)
+- after / before: ISO dates (YYYY-MM-DD) bounding the period, when the user gives one ("since 2024" -> after 2024-01-01; "in 2023" -> both; "prior to 1970" -> before 1969-12-31). Use ONLY these two keys for dates in history mode.
 - area: a city, county, zip, or neighbourhood word to narrow to, if any
 Do NOT set the mode-current filters for a history question.
 
@@ -2481,7 +2491,7 @@ LOCATION FILTERS (match values EXACTLY as listed, case-sensitive):
 
 DATE RANGE FILTERS (use ISO format YYYY-MM-DD):
 - insider_date_after / insider_date_before: INSIDER DATE (when record was published)
-- sale_date_after / sale_date_before: property SALE DATE
+- sale_date_after / sale_date_before: property SALE DATE. "sold before / after / in <year>", "sales prior to <year>" ALWAYS mean the SALE DATE, never year built — use min_year_built / max_year_built only when the user says "built" or "constructed".
 - land_sale_date_after / land_sale_date_before: LAND SALE DATE
 
 ADDRESS FILTERS (partial, case-insensitive match):
@@ -2558,7 +2568,8 @@ Respond with ONLY a JSON object: "mode", the applicable fields (omit ones that d
       const answer = await dropboxAsk.ask({
         type, question,
         subject: s(filters.subject), entity: s(filters.entity), field: s(filters.field), area: s(filters.area),
-        after: s(filters.after), before: s(filters.before),
+        after: s(filters.after || filters.sale_date_after || filters.land_sale_date_after),
+        before: s(filters.before || filters.sale_date_before || filters.land_sale_date_before),
       });
       const summary = await summarizeHistoryAnswer(apiKey, query.trim(), answer);
       return res.json({ filters, history: summary ? { ...answer, summary } : answer });

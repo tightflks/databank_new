@@ -281,6 +281,7 @@ export const ASK_QUESTIONS = [
   'property_history', // who owned / bought / sold X, sale history, what changed on X
   'entity_history',   // everything a company or person bought or sold, over time
   'repeat_sales',     // properties that sold more than once
+  'sold_once',        // properties with a single sale on record (sold in a period and never resold), oldest first
   'changes',          // properties whose record changed (optionally one field) in a period
   'new',              // properties that first appeared in a period
   'removed',          // properties that dropped off the list in a period
@@ -345,11 +346,17 @@ function salesOf(p: Stored): Sale[] {
   const dates = trail.filter((d) => !seen.has(d.value) && seen.add(d.value));
   return dates.map((d) => ({
     week: d.week,
-    date: d.value,
+    date: fixCentury(d.value),
     price: at(priceField, d.week),
     seller: at(sellerField, d.week),
     buyer: at(OWNER_FIELD, d.week) || at('OWNER', d.week),
   }));
+}
+
+// Reflex took two-digit years; a sale dated 1914 in a file that only goes back a few decades is 2014.
+export function fixCentury(date: string): string {
+  const y = Number(date.slice(0, 4));
+  return y >= 1900 && y < 1950 ? `${y + 100}${date.slice(4)}` : date;
 }
 
 function item(p: Stored): AskItem {
@@ -409,7 +416,9 @@ export async function ask(params: AskParams): Promise<Record<string, unknown>> {
 
   const areaTerms = norm(params.area ?? '').split(' ').filter(Boolean);
   const inArea = (i: number) => areaTerms.every((t) => words[i].includes(t));
-  const base = { type, question, weeks: hist.weeks.length, firstWeek: hist.weeks[0] ?? null, latestWeek: hist.weeks[hist.weeks.length - 1] ?? null, after: after ?? null, before: before ?? null };
+  let oldestSale: string | null = null;
+  for (const p of props) for (const s of salesOf(p)) if (s.date && (!oldestSale || s.date < oldestSale)) oldestSale = s.date;
+  const base = { type, question, weeks: hist.weeks.length, firstWeek: hist.weeks[0] ?? null, latestWeek: hist.weeks[hist.weeks.length - 1] ?? null, oldestSale, after: after ?? null, before: before ?? null };
 
   if (question === 'property_history') {
     const terms = norm(params.subject ?? '').split(' ').filter(Boolean);
@@ -450,6 +459,17 @@ export async function ask(params: AskParams): Promise<Record<string, unknown>> {
       if (saleList.length >= 2) items.push({ ...it, saleList });
     }
     items.sort((a, b) => b.saleList.length - a.saleList.length || (b.saleDate || '').localeCompare(a.saleDate || ''));
+    return { ...base, total: items.length, items: items.slice(0, limit) };
+  }
+
+  if (question === 'sold_once') {
+    const items: AskItem[] = [];
+    for (let i = 0; i < props.length; i++) {
+      if (!inArea(i)) continue;
+      const it = item(props[i]);
+      if (it.saleList.length === 1 && inRange(it.saleList[0].date, after, before)) items.push(it);
+    }
+    items.sort((a, b) => a.saleList[0].date.localeCompare(b.saleList[0].date));
     return { ...base, total: items.length, items: items.slice(0, limit) };
   }
 

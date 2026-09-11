@@ -84,6 +84,7 @@ const CATALOGUE: Group[] = [
     title: 'Market changes',
     examples: [
       { q: 'Properties that sold more than once since 2023', history: true },
+      { q: 'Oldest sales on record that were never resold', history: true },
       { q: 'What was added to the database this year', history: true },
       { q: 'What dropped off the list in 2026', history: true },
       { q: 'Sale price changes in Fulton since June', history: true },
@@ -165,6 +166,7 @@ const TITLES: Record<string, string> = {
   property_history: 'Property history',
   entity_history: 'Bought or sold by',
   repeat_sales: 'Sold more than once',
+  sold_once: 'Sold once, never resold',
   changes: 'Records that changed',
   new: 'Added to the database',
   removed: 'Dropped off the list',
@@ -251,7 +253,9 @@ export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnsw
       {answer.summary && (
         <div className="px-5 py-4 border-b border-amber-100">
           <p className="text-base sm:text-lg text-gray-900 leading-relaxed">{answer.summary}</p>
-          <p className="mt-1 text-xs text-gray-500">Written from the {answer.total.toLocaleString('en-US')} matching record{answer.total === 1 ? '' : 's'} below — every date, price and name comes from Databank's weekly files.</p>
+          {answer.total > 0 && (
+            <p className="mt-1 text-xs text-gray-500">Written from the {answer.total.toLocaleString('en-US')} matching record{answer.total === 1 ? '' : 's'} below — every date, price and name comes from Databank's weekly files.</p>
+          )}
         </div>
       )}
       {answer.items.length > 0 && (

@@ -410,7 +410,7 @@ export async function ask(params: AskParams): Promise<Record<string, unknown>> {
   const { type, question } = params;
   const after = params.after && WEEK_RE.test(params.after) ? params.after : undefined;
   const before = params.before && WEEK_RE.test(params.before) ? params.before : undefined;
-  const limit = Math.min(Math.max(params.limit ?? 25, 1), 200);
+  const limit = Math.min(Math.max(params.limit ?? 500, 1), 1000);
   const { hist, words } = await loadHistory(type);
   const props = hist.properties;
 

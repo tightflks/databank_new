@@ -9,6 +9,8 @@ import { computePricePerUnit } from './utils/pricePerUnit';
 import { titleCase, primaryName, aliasNames } from './utils/fmt';
 import { tokenMatches, wordsOf } from './utils/fuzzy';
 import { parseComments } from './utils/comments';
+import { PropertyReport } from './PropertyReport';
+import { downloadReportPdf } from './utils/reportPdf';
 
 const PAGE_SIZE = 100;
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
@@ -28,6 +30,9 @@ const NUMERIC_SORT: SortKey[] = ['units', 'salePrice', 'pricePerUnit'];
 const DATE_SORT: SortKey[] = ['saleDate', 'insiderDate'];
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+
+// Archive (Dropbox) file type per database — the key the property-history API uses.
+const ARCHIVE_TYPE: Record<string, string> = { apartments: 'APTS', franchise: 'FRANCHIS', industrial: 'IND', land: 'LANDSALE', offices: 'OFFSHOP', retail: 'OFFSHOP' };
 
 const DATABASE_OPTIONS = [
   { value: 'apartments', label: '🏢 Apartments' },
@@ -122,6 +127,8 @@ function UserDashboard() {
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
+  const [reportFor, setReportFor] = useState<{ type: string; id: string } | null>(null);
+  const [reportBusy, setReportBusy] = useState<'report' | 'pdf' | null>(null);
 
   // AI natural language search states
   const [aiQuery, setAiQuery] = useState('');
@@ -650,6 +657,39 @@ function UserDashboard() {
     }
     return best;
   }, [properties]);
+
+  // The row card is this week's record; the one-page report lives on the archive property.
+  // Find it by parcel, then by name/address, and take the single best match.
+  const findArchiveProperty = async (p: Property): Promise<{ type: string; id: string } | null> => {
+    const type = ARCHIVE_TYPE[databaseType];
+    if (!type) return null;
+    const queries = [String(p.parcel || '').trim(), primaryName(p.propertyName), String(p.address || '').trim()].filter(Boolean);
+    for (const q of queries) {
+      const res = await axios.get<{ total: number; items: { id: string; name: string }[] }>(`${API_URL}/api/dropbox/properties`, { params: { type, q, page: 0 } });
+      const items = res.data.items || [];
+      if (items.length === 1) return { type, id: items[0].id };
+      const exact = items.find((i) => i.name.toUpperCase() === String(p.propertyName || '').toUpperCase());
+      if (exact) return { type, id: exact.id };
+      if (items.length > 1 && q === queries[0]) return { type, id: items[0].id };
+    }
+    return null;
+  };
+
+  const openReportFor = async (p: Property, mode: 'report' | 'pdf') => {
+    if (reportBusy) return;
+    setReportBusy(mode);
+    try {
+      const found = await findArchiveProperty(p);
+      if (!found) { alert('This property is not in the history archive yet, so there is no report for it.'); return; }
+      if (mode === 'report') setReportFor(found);
+      else await downloadReportPdf(found.type, found.id, primaryName(p.propertyName));
+    } catch (e) {
+      console.error('Report failed:', e);
+      alert('Could not open the report. Please try again.');
+    } finally {
+      setReportBusy(null);
+    }
+  };
 
   const showHistoryFor = (p: Property) => {
     setHistoryQuery(primaryName(p.propertyName) || p.address);
@@ -1891,6 +1931,14 @@ function UserDashboard() {
           <PropertyHistory databaseType={databaseType} fixedMode="history" initialQuery={historyQuery} />
         ) : null}
 
+        {reportFor && (
+          <div className="fixed inset-0 bg-black/60 z-[60] flex items-start justify-center p-4 overflow-y-auto" onClick={() => setReportFor(null)}>
+            <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+              <PropertyReport type={reportFor.type} id={reportFor.id} onClose={() => setReportFor(null)} />
+            </div>
+          </div>
+        )}
+
         {/* Full Property Report Modal */}
         {selectedProperty && (
           <div
@@ -1909,12 +1957,28 @@ function UserDashboard() {
                     {aliasNames(selectedProperty.propertyName) || 'Insider Report'}{selectedProperty.insiderDate ? ` · reported ${selectedProperty.insiderDate}` : ''}
                   </p>
                 </div>
-                <button
-                  onClick={() => setSelectedProperty(null)}
-                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                >
-                  <X className="w-6 h-6" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openReportFor(selectedProperty, 'report')}
+                    disabled={reportBusy !== null}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-sm disabled:opacity-50"
+                  >
+                    {reportBusy === 'report' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />} One-page report
+                  </button>
+                  <button
+                    onClick={() => openReportFor(selectedProperty, 'pdf')}
+                    disabled={reportBusy !== null}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-700 text-sm hover:bg-blue-50 disabled:opacity-50"
+                  >
+                    {reportBusy === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
+                  </button>
+                  <button
+                    onClick={() => setSelectedProperty(null)}
+                    className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
               {/* Report Sections */}

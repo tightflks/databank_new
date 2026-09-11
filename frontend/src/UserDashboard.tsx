@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import PropertyPhoto from './PropertyPhoto';
-import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock } from 'lucide-react';
+import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock, FileDown } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
@@ -89,6 +89,7 @@ function UserDashboard() {
   const [showFilters, setShowFilters] = useState(false);
   const [visibleRows, setVisibleRows] = useState(PAGE_SIZE);
   const [exporting, setExporting] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
   const [propertySearchText, setPropertySearchText] = useState('');
   const searchQuery = useDebounced(propertySearchText, 250);
   const [selectedCity, setSelectedCity] = useState('');
@@ -352,7 +353,7 @@ function UserDashboard() {
 
         const salePriceStr = String(getCell('SALE PRICE')).trim();
         // Apartments size by units; industrial sizes by building square feet
-        const unitsStr = String(getCellAny('UNITS COMPLETED', '# SQ FT BUILT')).trim();
+        const unitsStr = String(getCellAny('UNITS COMPLETED:', 'UNITS COMPLETED', '# SQ FT BUILT')).trim();
         const pricePerUnit = computePricePerUnit(
           salePriceStr,
           unitsStr,
@@ -693,6 +694,65 @@ function UserDashboard() {
     setAiError(null);
   };
 
+  // Dashboard rows open Search Database on just that slice: every other filter (and any
+  // Ask AI answer hiding the list) is cleared first so the rows actually show.
+  const drillDown = (apply: () => void) => {
+    clearPropertyFilters();
+    setBrowseWithAnswer(false);
+    apply();
+    setActiveView('search');
+  };
+  const recentSince = recentInsiderStats.dates[recentInsiderStats.dates.length - 1] || '';
+
+  const downloadSnapshot = async () => {
+    if (snapshotting) return;
+    setSnapshotting(true);
+    try {
+      const label = (DATABASE_OPTIONS.find((o) => o.value === databaseType)?.label || databaseType).replace(/^[^A-Za-z]+/, '');
+      const rs = recentInsiderStats;
+      const count = (n: number) => `${n.toLocaleString()} propert${n !== 1 ? 'ies' : 'y'}`;
+      const tally = (key: 'county' | 'zip' | 'city') => {
+        const m = new Map<string, number>();
+        properties.forEach((p) => { const k = String(p[key] || '').trim(); if (k) m.set(k, (m.get(k) || 0) + 1); });
+        return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([label, n]) => ({ label, value: count(n) }));
+      };
+      const snapshot = {
+        database: label,
+        scope: 'Market snapshot',
+        period: rs.dates.length ? `Recent Insider activity: ${rs.dates.length} Insider dates, ${recentSince} – ${rs.dates[0]}` : '',
+        source: latestUploadName ? `Databank Atlanta weekly research file ${latestUploadName}` : '',
+        tiles: [
+          { label: 'Properties (recent)', value: rs.propertyCount.toLocaleString() },
+          { label: 'Total volume', value: formatCompactCurrency(rs.totalVolume) },
+          { label: 'Average price', value: formatCompactCurrency(rs.avgPrice) },
+          { label: 'Median price', value: formatCompactCurrency(rs.medianPrice) },
+          { label: 'Top sale', value: formatCompactCurrency(rs.maxPrice) },
+          { label: `Total ${unitLabel}`, value: rs.totalUnits > 0 ? rs.totalUnits.toLocaleString() : '—' },
+        ],
+        sections: [
+          { title: 'Recent activity by county', rows: rs.topCounties.map((c) => ({ label: c.county, value: count(c.count), extra: c.volume > 0 ? formatCompactCurrency(c.volume) : undefined })) },
+          { title: 'Recent activity by city', rows: rs.topCities.map((c) => ({ label: c.city, value: count(c.count) })) },
+          { title: 'Top owners, sales in the last 3 years', note: filteredProperties.length !== properties.length ? 'Within the current search filters' : undefined, rows: topOwners.slice(0, 10).map((o) => ({ label: o.owner, value: count(o.count), extra: o.volume > 0 ? formatCompactCurrency(o.volume) : undefined })) },
+          { title: `All ${properties.length.toLocaleString()} properties by county`, rows: tally('county') },
+          { title: 'By zip code', rows: tally('zip') },
+          { title: 'By city', rows: tally('city') },
+        ],
+      };
+      const res = await axios.post(`${API_URL}/api/market-snapshot.pdf`, snapshot, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `databank-${databaseType}-snapshot.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Snapshot PDF failed:', e);
+      alert('Could not build the PDF. Please try again.');
+    } finally {
+      setSnapshotting(false);
+    }
+  };
+
   const handleAiSearch = async () => {
     if (!aiQuery.trim() || aiLoading) return;
 
@@ -985,8 +1045,17 @@ function UserDashboard() {
                 <p className="text-sm text-gray-500">
                   Stats across the last {recentInsiderStats.dates.length} insider date{recentInsiderStats.dates.length !== 1 ? 's' : ''}
                   {recentInsiderStats.dates.length > 0 && ` (${recentInsiderStats.dates[recentInsiderStats.dates.length - 1]} – ${recentInsiderStats.dates[0]})`}
+                  {' · click a county or city to see those properties'}
                 </p>
               </div>
+              <button
+                onClick={downloadSnapshot}
+                disabled={snapshotting}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
+                title="One-page PDF of these numbers"
+              >
+                {snapshotting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
+              </button>
             </div>
 
             <div className="space-y-6">
@@ -1050,10 +1119,7 @@ function UserDashboard() {
                           <div
                             key={county}
                             className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                            onClick={() => {
-                              setActiveView('search');
-                              setSelectedCounties([county]);
-                            }}
+                            onClick={() => drillDown(() => { setSelectedCounties([county]); setInsiderDateAfter(recentSince); })}
                           >
                             <span className="font-medium text-gray-700">{county}</span>
                             <span className="text-sm text-gray-500">
@@ -1078,10 +1144,7 @@ function UserDashboard() {
                           <div
                             key={city}
                             className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                            onClick={() => {
-                              setActiveView('search');
-                              setSelectedCity(city);
-                            }}
+                            onClick={() => drillDown(() => { setSelectedCity(city); setInsiderDateAfter(recentSince); })}
                           >
                             <span className="font-medium text-gray-700">{city}</span>
                             <span className="text-sm text-gray-500">
@@ -1135,17 +1198,19 @@ function UserDashboard() {
               </div>
             </div>
             {topOwners.length === 0 ? (
-              <p className="text-sm text-gray-500">No sales with owner information in the last 3 years.</p>
+              <p className="text-sm text-gray-500">
+                No sales with owner information in the last 3 years{filteredProperties.length !== properties.length ? ' within the current search filters' : ''}.
+                {filteredProperties.length !== properties.length && (
+                  <button onClick={clearPropertyFilters} className="ml-2 text-blue-600 hover:underline">Clear filters</button>
+                )}
+              </p>
             ) : (
               <div className="space-y-2">
                 {topOwners.map(({ owner, count, volume, units }) => (
                   <div
                     key={owner}
                     className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                    onClick={() => {
-                      setActiveView('search');
-                      setEntityFilter(owner);
-                    }}
+                    onClick={() => drillDown(() => setEntityFilter(owner))}
                     title="Click to view all properties associated with this owner"
                   >
                     <span className="font-medium text-gray-700 truncate mr-4">{owner}</span>
@@ -1185,10 +1250,7 @@ function UserDashboard() {
                       <div
                         key={county}
                         className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                        onClick={() => {
-                          setActiveView('search');
-                          setSelectedCounties([county]);
-                        }}
+                        onClick={() => drillDown(() => setSelectedCounties([county]))}
                       >
                         <span className="font-medium text-gray-700">{county}</span>
                         <span className="text-sm font-semibold text-blue-600">{count.toLocaleString()} properties</span>
@@ -1219,10 +1281,7 @@ function UserDashboard() {
                       <div
                         key={zip}
                         className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                        onClick={() => {
-                          setActiveView('search');
-                          setSelectedZipcode(zip === 'Unknown' ? '' : zip);
-                        }}
+                        onClick={() => drillDown(() => setSelectedZipcode(zip === 'Unknown' ? '' : zip))}
                       >
                         <span className="font-medium text-gray-700">{zip}</span>
                         <span className="text-sm font-semibold text-green-600">{count.toLocaleString()} properties</span>

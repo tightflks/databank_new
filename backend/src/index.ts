@@ -810,6 +810,72 @@ app.get('/api/dropbox/report.pdf', rateLimit(60, 'Report limit reached ({n} an h
   }
 });
 
+// Market snapshot PDF: the Dashboard's tiles and breakdowns, computed in the browser
+// (already filtered the way the customer sees them) and rendered here as one page.
+type SnapshotRow = { label: string; value: string; extra?: string };
+type SnapshotSection = { title: string; note?: string; rows: SnapshotRow[] };
+type Snapshot = { database: string; scope: string; period: string; source: string; tiles: SnapshotRow[]; sections: SnapshotSection[] };
+
+function parseSnapshot(b: unknown): Snapshot | null {
+  if (!b || typeof b !== 'object') return null;
+  const o = b as Record<string, unknown>;
+  const str = (v: unknown, max = 200) => (typeof v === 'string' ? v.slice(0, max) : typeof v === 'number' ? String(v) : '');
+  const rows = (v: unknown, max: number): SnapshotRow[] =>
+    Array.isArray(v) ? v.slice(0, max).map((r) => { const x = (r || {}) as Record<string, unknown>; return { label: str(x.label), value: str(x.value), extra: str(x.extra) || undefined }; }) : [];
+  const sections = Array.isArray(o.sections)
+    ? o.sections.slice(0, 8).map((s) => { const x = (s || {}) as Record<string, unknown>; return { title: str(x.title), note: str(x.note) || undefined, rows: rows(x.rows, 15) }; })
+    : [];
+  return { database: str(o.database), scope: str(o.scope), period: str(o.period), source: str(o.source), tiles: rows(o.tiles, 8), sections };
+}
+
+function snapshotHtml(s: Snapshot): string {
+  const tiles = s.tiles.map((t) => `<div class="tile"><div class="k">${esc(t.label)}</div><div class="v">${esc(t.value)}</div></div>`).join('');
+  const sections = s.sections.filter((x) => x.rows.length).map((x) => `<section><h2>${esc(x.title)}</h2>${x.note ? `<p class="muted">${esc(x.note)}</p>` : ''}<table>${x.rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="n">${esc(r.value)}</td>${r.extra ? `<td class="n green">${esc(r.extra)}</td>` : '<td></td>'}</tr>`).join('')}</table></section>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    ${embeddedFontCss()}
+    * { box-sizing: border-box; } body { font-family: Inter, Arial, sans-serif; color: #111827; margin: 0; padding: 40px 44px; font-size: 12px; line-height: 1.45; }
+    .brand { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 18px; }
+    .brand b { font-size: 15px; color: #1e3a8a; letter-spacing: .04em; } .brand span { color: #6b7280; font-size: 11px; }
+    h1 { font-size: 22px; margin: 0 0 2px; } .sub { color: #4b5563; margin-bottom: 16px; }
+    .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 8px; } .tile { background: #eff6ff; border-radius: 10px; padding: 10px 12px; }
+    .tile .k { color: #1e3a8a; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; } .tile .v { font-weight: 700; font-size: 18px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; } section { break-inside: avoid; }
+    h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #1e3a8a; margin: 18px 0 6px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; } td { padding: 4px 6px 4px 0; border-bottom: 1px solid #f3f4f6; } td.n { white-space: nowrap; text-align: right; font-weight: 600; color: #374151; } td.green { color: #047857; }
+    .muted { color: #6b7280; font-size: 10.5px; margin: 0 0 4px; }
+    .foot { margin-top: 24px; color: #6b7280; font-size: 10.5px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+  </style></head><body>
+    <div class="brand"><b>DATABANK ATLANTA</b><span>Market snapshot · ${esc(longDate(new Date().toISOString().slice(0, 10)))}</span></div>
+    <h1>${esc(s.database)} — ${esc(s.scope || 'All properties')}</h1>
+    <div class="sub">${esc(s.period)}</div>
+    ${tiles ? `<div class="tiles">${tiles}</div>` : ''}
+    <div class="grid">${sections}</div>
+    <div class="foot">Source: ${esc(s.source || 'Databank Atlanta weekly research files')}. www.databankinfo.com · (404) 872-8880</div>
+  </body></html>`;
+}
+
+app.post('/api/market-snapshot.pdf', rateLimit(60, 'Report limit reached ({n} an hour)'), async (req: Request, res: Response) => {
+  const s = parseSnapshot(req.body);
+  if (!s || !s.database) return res.status(400).json({ error: 'snapshot is required' });
+  try {
+    const browser = await launchBrowser();
+    try {
+      const page = await browser.newPage();
+      await page.setContent(snapshotHtml(s), { waitUntil: 'load' });
+      const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } });
+      const slug = `${s.database} ${s.scope}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="databank-snapshot-${slug || 'market'}.pdf"`);
+      res.send(Buffer.from(pdf));
+    } finally {
+      await browser.close();
+    }
+  } catch (e) {
+    console.error('Market snapshot PDF failed:', e);
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Report failed' });
+  }
+});
+
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage });

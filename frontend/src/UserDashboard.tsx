@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import PropertyPhoto from './PropertyPhoto';
+import PropertyMap from './PropertyMap';
 import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock, FileDown } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
@@ -1990,6 +1991,12 @@ function UserDashboard() {
                   zip={selectedProperty.zip}
                   databaseType={databaseType}
                   admin={ADMIN_ROUTE}
+                />
+                <PropertyMap
+                  name={primaryName(selectedProperty.propertyName)}
+                  address={selectedProperty.address.trim()}
+                  city={selectedProperty.city}
+                  zip={selectedProperty.zip}
                 />
                 {buildReportSections(selectedProperty).map((section) => (
                   <div key={section.title}>

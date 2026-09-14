@@ -78,6 +78,10 @@ export default function PropertyPhoto({ name, address, city, zip, databaseType, 
   return (
     <div className="rounded-xl overflow-hidden border border-gray-200">
       <img src={`${API_URL}/api/photos/${key}/image`} alt={name} className="w-full h-56 sm:h-72 object-cover" />
+      <p className="px-4 py-1.5 text-xs text-gray-500 bg-white border-t border-gray-100">
+        Image from Google Maps Street View{panoDate ? ` (captured ${panoDate})` : ''}, matched by address. It shows the nearest available
+        street-level view and may not reflect the property exactly or its current condition.
+      </p>
       {admin && (
         <div className="flex items-center gap-3 px-4 py-2 bg-gray-50 text-sm">
           <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${status === 'approved' ? 'bg-green-100 text-green-800' : status === 'rejected' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>

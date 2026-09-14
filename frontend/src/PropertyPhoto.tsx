@@ -15,8 +15,9 @@ interface Props {
   admin: boolean;
 }
 
-// Customers see an approved Street View photo or a "coming soon" tile; admins see every fetched
-// photo with Approve / Reject so nothing unverified reaches the public view.
+// Customers see an approved Street View photo, or a map of the address when Google has no
+// street-level image; admins see every fetched photo with Approve / Reject so nothing
+// unverified reaches the public view.
 export default function PropertyPhoto({ name, address, city, zip, databaseType, admin }: Props) {
   const [status, setStatus] = useState<Status | null>(null);
   const [key, setKey] = useState('');
@@ -57,13 +58,21 @@ export default function PropertyPhoto({ name, address, city, zip, databaseType, 
   const showImage = status === 'approved' || (admin && status !== 'none');
 
   if (!showImage) {
+    const q = [address, city, ['GA', zip].filter(Boolean).join(' ')].filter((s) => s && s.trim()).join(', ');
     return (
-      <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-6 flex items-center gap-4 text-gray-500">
-        <Camera className="w-8 h-8 shrink-0" />
-        <div className="text-sm flex-1">
-          <p className="font-semibold text-gray-700">Photo coming soon</p>
-          <p>Property photos are being verified before they go live.</p>
-        </div>
+      <div className="rounded-xl overflow-hidden border border-gray-200">
+        <iframe
+          title={`Map of ${q}`}
+          src={`https://maps.google.com/maps?q=${encodeURIComponent(q)}&z=16&output=embed`}
+          className="w-full h-56 sm:h-72 border-0"
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+        />
+        <div className="flex items-center gap-3 px-4 py-1.5 text-xs text-gray-500 bg-white border-t border-gray-100">
+          <p className="flex-1">
+            Google Maps has no street-level photo for this address, so the map location is shown instead. The pin is matched by address
+            and may sit a short distance from the property itself.
+          </p>
         {admin && configured && (
           <button onClick={fetchPhoto} disabled={busy} className="px-3 py-1.5 rounded-lg bg-[#0b1f5c] text-white text-sm font-semibold disabled:opacity-50 flex items-center gap-1">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Fetch Street View
@@ -71,6 +80,7 @@ export default function PropertyPhoto({ name, address, city, zip, databaseType, 
         )}
         {admin && !configured && <span className="text-xs">GOOGLE_MAPS_API_KEY not set</span>}
         {error && <span className="text-xs text-red-600">{error}</span>}
+        </div>
       </div>
     );
   }

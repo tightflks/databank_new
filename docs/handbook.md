@@ -82,6 +82,16 @@ lender, and Databank's notes.
 
 Top right of the card: **One-page report** and **Download PDF** (§7), and **×** to close.
 
+### Photo and map
+
+Under the title you'll see the property's Street View photo (where Google has one) and a
+**View on map** bar. Click **View on map** to open a Google map pinned on the address right
+inside the card, or **Open in Google Maps** to jump to Google Maps in a new tab for directions
+and Street View.
+
+Both come from Google Maps and are matched by address, so the photo or pin may be a short
+distance from the property itself — treat them as a guide, not a survey.
+
 ## 6. Property History — the clock icon
 
 The row card is *this week's* record. The **clock** shows the property's **whole life** in
@@ -93,6 +103,7 @@ Databank's files: every owner, every sale, every name change.
 - **Sales** — each sale with price and buyer.
 - **What changed, week by week** — a timeline of every change Databank recorded.
 - **One-page report** and **Download PDF** buttons at the top right.
+- **View on map** / **Open in Google Maps** — the same map bar as on the row card.
 
 You can also open **Property History** from the view buttons and search for a property by
 name, address, parcel or owner.
@@ -155,6 +166,9 @@ week's full list; an Ask AI answer shows only the properties that match your que
 photo shows the nearest available street-level view, so it may not reflect the property exactly
 or its current condition — accuracy is not guaranteed. Where no view is available yet you'll see
 "Photo coming soon".
+
+**Can I see the property on a map?** Yes — click **View on map** on the property card or in
+Property History, or **Open in Google Maps** for directions.
 
 **Can I save a search?** Not yet — export it to Excel, or simply ask Ask AI the same question
 again.

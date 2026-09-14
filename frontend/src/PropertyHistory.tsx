@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Loader2, AlertCircle, X, ExternalLink, Clock, FileSpreadsheet, FileText, FileDown } from 'lucide-react';
 import { PropertyReport } from './PropertyReport';
 import { downloadReportPdf } from './utils/reportPdf';
+import PropertyMap from './PropertyMap';
 
 // Property Search over the Dropbox archive of weekly Reflex files.
 //   Properties   — one record per property across every synced week: current
@@ -198,6 +199,10 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
           <div className="text-2xl font-bold text-gray-900">{owners.length}</div>
           <div className="text-xs text-gray-600">Owner{owners.length === 1 ? '' : 's'} on record since {fmtDate(p.first)}</div>
         </div>
+      </div>
+
+      <div className="mb-6">
+        <PropertyMap name={p.name} address={p.address} city={p.city} zip={p.current['P ZIP'] ?? ''} />
       </div>
 
       <div className="grid md:grid-cols-2 gap-6 mb-6">

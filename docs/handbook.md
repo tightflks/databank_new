@@ -84,8 +84,9 @@ Top right of the card: **One-page report** and **Download PDF** (§7), and **×*
 
 ### Photo and map
 
-Under the title you'll see the property's Street View photo (where Google has one) and a
-**View on map** bar. Click **View on map** to open a Google map pinned on the address right
+Under the title you'll see the property's Street View photo. Where Google has no street-level
+photo for the address (common for land parcels), a map pinned on the address takes its place,
+with a note saying so. Below that is a **View on map** bar. Click **View on map** to open a Google map pinned on the address right
 inside the card, or **Open in Google Maps** to jump to Google Maps in a new tab for directions
 and Street View.
 
@@ -164,8 +165,8 @@ week's full list; an Ask AI answer shows only the properties that match your que
 
 **Where do the property photos come from?** Google Maps Street View, matched by address. Each
 photo shows the nearest available street-level view, so it may not reflect the property exactly
-or its current condition — accuracy is not guaranteed. Where no view is available yet you'll see
-"Photo coming soon".
+or its current condition — accuracy is not guaranteed. Where Google has no street-level photo
+for an address, the card shows a map of the location instead.
 
 **Can I see the property on a map?** Yes — click **View on map** on the property card or in
 Property History, or **Open in Google Maps** for directions.

@@ -151,8 +151,10 @@ week's full list; an Ask AI answer shows only the properties that match your que
 **Can I search more than one zip code?** Yes — in Filters type `30305, 30309`, or ask
 *sold in 30305 or 30309 since 2024*.
 
-**Where do the property photos come from?** Google Street View, matched by address. Photos
-appear as they are verified; until then you'll see "Photo coming soon".
+**Where do the property photos come from?** Google Maps Street View, matched by address. Each
+photo shows the nearest available street-level view, so it may not reflect the property exactly
+or its current condition — accuracy is not guaranteed. Where no view is available yet you'll see
+"Photo coming soon".
 
 **Can I save a search?** Not yet — export it to Excel, or simply ask Ask AI the same question
 again.

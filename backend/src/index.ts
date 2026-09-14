@@ -2936,7 +2936,7 @@ if (fs.existsSync(frontendDist)) {
 }
 
 // Start the server
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
   if (dropboxConfigured()) {
     syncAllDatabasesFromDropbox();
@@ -2951,3 +2951,13 @@ app.listen(port, () => {
   );
   console.log(photosConfigured() ? 'Street View photos enabled (admin approval required)' : 'GOOGLE_MAPS_API_KEY not set — property photos off');
 });
+
+// Railway stops the previous container with SIGTERM on every deploy; exit cleanly so the
+// old deployment is not reported as crashed.
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => {
+    console.log(`${sig} received — shutting down`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  });
+}

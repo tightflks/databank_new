@@ -150,7 +150,7 @@ export function PropertyReport({ type, id, onClose }: { type: string; id: string
         </>
       )}
 
-      <p className="mt-6 pt-2 border-t border-gray-200 text-xs text-gray-500">Source: Databank Atlanta weekly research files, {fmtDate(r.first)} – {fmtDate(r.last)} ({r.weeks} weekly files).</p>
+      <p className="mt-6 pt-2 border-t border-gray-200 text-xs text-gray-500">Source: Databank Atlanta research.</p>
     </div>
   );
 }

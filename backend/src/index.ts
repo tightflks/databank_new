@@ -791,7 +791,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
     ${sales.length ? `<table><tr><th>Date</th><th>Price</th><th>Buyer</th><th>Seller</th></tr>${sales.map((s) => `<tr><td class="n">${esc(s.date)}</td><td class="n">${esc(money(s.price))}</td><td>${esc(s.buyer || '—')}</td><td>${esc(s.seller || '—')}</td></tr>`).join('')}</table>` : '<p class="muted">No sale recorded.</p>'}
     ${r.loan || r.lender || r.broker ? `<h2>Financing &amp; brokerage</h2><p>${r.loan ? `<b>Loan:</b> ${esc(money(r.loan))}` : ''}${r.lender ? ` &nbsp; <b>Lender:</b> ${esc(r.lender)}` : ''}${r.broker ? ` &nbsp; <b>Broker:</b> ${esc(r.broker)}` : ''}</p>` : ''}
     ${r.comments ? `<h2>Research notes</h2><p>${esc(r.comments)}</p>` : ''}
-    <div class="foot">Source: Databank Atlanta weekly research files, ${esc(longDate(r.first))} – ${esc(longDate(r.last))} (${r.weeks} weekly files). Record ${esc(r.id)}. www.databankinfo.com · (404) 872-8880</div>
+    <div class="foot">Source: Databank Atlanta research. www.databankinfo.com · (404) 872-8880</div>
   </body></html>`;
 }
 

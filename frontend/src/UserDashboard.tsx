@@ -360,7 +360,17 @@ function UserDashboard() {
           .filter((d: string) => d && d !== latestInsider && !isNaN(new Date(d).getTime()))
           .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime())[0] || '';
 
-        const salePriceStr = String(getCell('SALE PRICE')).trim();
+        // Land files record the transaction under LAND SALE DATE / LAND SALE PRICE; SALE DATE is
+        // for a building on the parcel and is almost always blank.
+        const landSaleDate = formatExcelDate(getCell('LAND SALE DATE'));
+        const landSalePrice = String(getCell('LAND SALE PRICE')).trim();
+        const salePriceStr = String(getCell('SALE PRICE')).trim() || (databaseType === 'land' ? landSalePrice : '');
+        const saleDate = formatExcelDate(getCell('SALE DATE')) || (databaseType === 'land' ? landSaleDate : '');
+        // Researcher notes (M1..M10) so Quick find matches text like "LAND FOR THE APTS"
+        const comments = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10']
+          .map(c => String(getCell(c)).trim())
+          .filter(Boolean)
+          .join(' ');
         // Apartments size by units; industrial sizes by building square feet
         const unitsStr = String(getCellAny('UNITS COMPLETED:', 'UNITS COMPLETED', '# SQ FT BUILT')).trim();
         const pricePerUnit = computePricePerUnit(
@@ -381,9 +391,10 @@ function UserDashboard() {
           insiderDate: latestInsider,
           lastInsiderDate: previousInsider,
           salePrice: salePriceStr,
-          saleDate: formatExcelDate(getCell('SALE DATE')),
-          landSalePrice: String(getCell('LAND SALE PRICE')).trim(),
-          landSaleDate: formatExcelDate(getCell('LAND SALE DATE')),
+          saleDate,
+          landSalePrice,
+          landSaleDate,
+          comments,
           units: unitsStr,
           pricePerUnit: pricePerUnit > 0 ? String(pricePerUnit) : '',
           acres: String(getCell('# ACRES')).trim(),
@@ -445,7 +456,7 @@ function UserDashboard() {
         );
         const words = wordsOf(
           canonicalText(
-            [p.propertyName, p.city, p.county, p.owner, p.seller, p.address, p.streetName, p.marketArea]
+            [p.propertyName, p.city, p.county, p.owner, p.seller, p.address, p.streetName, p.marketArea, p.comments]
               .map(v => String(v || ''))
               .join(' ')
           )

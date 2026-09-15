@@ -2582,8 +2582,8 @@ NUMERIC RANGE FILTERS:
 - min_year_built / max_year_built: year built (YYYY)
 
 TEXT SEARCH (searches across ALL fields in the database):
-- search_text: free text matched against property name, description, address, owner, seller, and all other text fields
-
+- search_text: free text matched against property name, description, address, owner, seller, the researcher notes, and all other text fields
+${databaseType === 'land' ? '- The intended use of a land parcel (apartments, retail, industrial, subdivision, hotel…) is only in the researcher notes, so "apartment land sales" / "land for apartments" -> search_text: "apartments" (the notes use APTS, APARTMENT and APARTMENTS; the search normalises these).\n' : ''}
 OWNER / SELLER FILTERS (partial name, case-insensitive match). The OWNER of a property is the BUYER in its most recent sale; the SELLER is who sold it:
 - owner: use when the user asks who OWNS or BOUGHT properties (matches owner and tax-owner names)
 - seller: use when the user asks who SOLD properties

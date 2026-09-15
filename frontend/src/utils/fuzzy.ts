@@ -50,6 +50,8 @@ const STREET_ABBR: Record<string, string> = {
   square: 'sq', point: 'pt', pointe: 'pt', ridge: 'rdg', crossing: 'xing', expressway: 'expy',
   freeway: 'fwy', center: 'ctr', centre: 'ctr', mount: 'mt', north: 'n', south: 's', east: 'e', west: 'w',
   northeast: 'ne', northwest: 'nw', southeast: 'se', southwest: 'sw', saint: 'st', fort: 'ft',
+  // Researcher notes abbreviate property types ("LAND FOR THE APTS")
+  apartment: 'apts', apartments: 'apts', apt: 'apts', acres: 'acs', acre: 'acs', approximately: 'approx',
 };
 
 // Filler words customers type in property names ("the mason augusta") that the records omit.

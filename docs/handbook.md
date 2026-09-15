@@ -66,6 +66,10 @@ road smyrna* finds *1898 SPRING RD.*), and words like *the* are ignored, so *the
 finds *Mason Augusta*. If no property matches every word you typed, Quick find shows the
 closest matches instead and says so above the table.
 
+Quick find also searches the research notes on every record, so in the Land database
+*land for apartments* (or *apts*) finds parcels our researchers noted as bought for apartments.
+For land sales, the Sale Date and Sale Price columns show the land transaction itself.
+
 ![Quick find](images/07-quick-find.png)
 
 ### Filters

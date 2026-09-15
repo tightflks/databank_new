@@ -364,8 +364,10 @@ function UserDashboard() {
         // for a building on the parcel and is almost always blank.
         const landSaleDate = formatExcelDate(getCell('LAND SALE DATE'));
         const landSalePrice = String(getCell('LAND SALE PRICE')).trim();
-        const salePriceStr = String(getCell('SALE PRICE')).trim() || (databaseType === 'land' ? landSalePrice : '');
-        const saleDate = formatExcelDate(getCell('SALE DATE')) || (databaseType === 'land' ? landSaleDate : '');
+        const bldgSalePrice = String(getCell('SALE PRICE')).trim();
+        const bldgSaleDate = formatExcelDate(getCell('SALE DATE'));
+        const salePriceStr = databaseType === 'land' ? (landSalePrice || bldgSalePrice) : bldgSalePrice;
+        const saleDate = databaseType === 'land' ? (landSaleDate || bldgSaleDate) : bldgSaleDate;
         // Researcher notes (M1..M10) so Quick find matches text like "LAND FOR THE APTS"
         const comments = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10']
           .map(c => String(getCell(c)).trim())

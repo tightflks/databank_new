@@ -42,3 +42,30 @@ export function tokenMatches(token: string, haystack: string, words: string[]): 
 export function wordsOf(text: string): string[] {
   return text.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
 }
+
+// USPS-style abbreviations so "spring road" finds "SPRING RD." and vice versa.
+const STREET_ABBR: Record<string, string> = {
+  road: 'rd', street: 'st', drive: 'dr', avenue: 'ave', boulevard: 'blvd', parkway: 'pkwy',
+  highway: 'hwy', lane: 'ln', court: 'ct', circle: 'cir', place: 'pl', trail: 'trl', terrace: 'ter',
+  square: 'sq', point: 'pt', pointe: 'pt', ridge: 'rdg', crossing: 'xing', expressway: 'expy',
+  freeway: 'fwy', center: 'ctr', centre: 'ctr', mount: 'mt', north: 'n', south: 's', east: 'e', west: 'w',
+  northeast: 'ne', northwest: 'nw', southeast: 'se', southwest: 'sw', saint: 'st', fort: 'ft',
+};
+
+// Filler words customers type in property names ("the mason augusta") that the records omit.
+const STOP_WORDS = new Set(['the', 'a', 'an', 'of', 'at', 'in', 'on', 'and', '&']);
+
+export function canonicalText(text: string): string {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9@/-]+/)
+    .filter(Boolean)
+    .map(w => STREET_ABBR[w] ?? w)
+    .join(' ');
+}
+
+export function searchTokens(query: string): string[] {
+  const all = canonicalText(query).split(' ').filter(Boolean);
+  const kept = all.filter(t => !STOP_WORDS.has(t));
+  return kept.length ? kept : all;
+}

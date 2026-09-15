@@ -8,7 +8,7 @@ import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
 import { titleCase, primaryName, aliasNames } from './utils/fmt';
-import { tokenMatches, wordsOf } from './utils/fuzzy';
+import { tokenMatches, wordsOf, canonicalText, searchTokens } from './utils/fuzzy';
 import { parseComments } from './utils/comments';
 import { PropertyReport } from './PropertyReport';
 import { downloadReportPdf } from './utils/reportPdf';
@@ -427,23 +427,25 @@ function UserDashboard() {
     
     // Text search across ALL fields in the property
     if (searchQuery.trim()) {
-      const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+      const tokens = searchTokens(searchQuery);
       // Parcel numbers are typed with or without spacing (111012003 vs 111 012 003)
       const digits = searchQuery.replace(/\D/g, '');
       const asParcel = digits.length >= 6 && /^[\d\s-]+$/.test(searchQuery.trim());
       filtered = filtered.filter(p => {
         if (asParcel && String(p.parcel || '').replace(/\D/g, '').includes(digits)) return true;
         // Search across all string values in the property object
-        const allValues = Object.values(p)
-          .filter(v => typeof v === 'string')
-          .join(' ')
-          .toLowerCase();
+        const allValues = canonicalText(
+          Object.values(p)
+            .filter(v => typeof v === 'string')
+            .join(' ')
+        );
         if (tokens.every(token => allValues.includes(token))) return true;
         const words = wordsOf(
-          [p.propertyName, p.city, p.county, p.owner, p.seller, p.address, p.streetName, p.marketArea]
-            .map(v => String(v || ''))
-            .join(' ')
-            .toLowerCase()
+          canonicalText(
+            [p.propertyName, p.city, p.county, p.owner, p.seller, p.address, p.streetName, p.marketArea]
+              .map(v => String(v || ''))
+              .join(' ')
+          )
         );
         return tokens.every(token => tokenMatches(token, allValues, words));
       });

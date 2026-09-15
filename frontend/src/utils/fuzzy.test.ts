@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tokenMatches, wordsOf, allowedTypos } from './fuzzy';
+import { tokenMatches, wordsOf, allowedTypos, canonicalText, searchTokens } from './fuzzy';
 
 const rec = 'cielo@vinings/windwood apartments austell cobb berkadia';
 const words = wordsOf(rec);
@@ -28,5 +28,18 @@ describe('fuzzy search', () => {
     expect(tokenMatches('cab', rec, words)).toBe(false);
     expect(tokenMatches('marietta', rec, words)).toBe(false);
     expect(tokenMatches('xyzqwerty', rec, words)).toBe(false);
+  });
+});
+
+describe('address abbreviations and filler words', () => {
+  it('treats "road" and "rd." as the same word', () => {
+    const rec = canonicalText('1898 SPRING RD. SMYRNA COBB');
+    expect(searchTokens('1898 spring road smyrna').every(t => rec.includes(t))).toBe(true);
+    expect(searchTokens('1898 spring rd. smyrna').every(t => rec.includes(t))).toBe(true);
+  });
+
+  it('drops "the" so "the mason augusta" finds MASON AUGUSTA', () => {
+    expect(searchTokens('the mason augusta')).toEqual(['mason', 'augusta']);
+    expect(searchTokens('the')).toEqual(['the']);
   });
 });

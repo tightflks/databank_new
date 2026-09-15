@@ -26,8 +26,8 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-type SortKey = 'propertyName' | 'city' | 'county' | 'units' | 'salePrice' | 'pricePerUnit' | 'saleDate' | 'insiderDate';
-const NUMERIC_SORT: SortKey[] = ['units', 'salePrice', 'pricePerUnit'];
+type SortKey = 'propertyName' | 'city' | 'county' | 'units' | 'salePrice' | 'pricePerUnit' | 'acres' | 'saleDate' | 'insiderDate';
+const NUMERIC_SORT: SortKey[] = ['units', 'salePrice', 'pricePerUnit', 'acres'];
 const DATE_SORT: SortKey[] = ['saleDate', 'insiderDate'];
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
@@ -360,14 +360,16 @@ function UserDashboard() {
           .filter((d: string) => d && d !== latestInsider && !isNaN(new Date(d).getTime()))
           .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime())[0] || '';
 
-        // Land files record the transaction under LAND SALE DATE / LAND SALE PRICE; SALE DATE is
-        // for a building on the parcel and is almost always blank.
+        // A record may carry a building sale (SALE DATE / SALE PRICE) and/or a land sale
+        // (LAND SALE DATE / LAND SALE PRICE). Land files lead with the land sale; the others show
+        // the building sale and fall back to the land sale when there is none.
         const landSaleDate = formatExcelDate(getCell('LAND SALE DATE'));
         const landSalePrice = String(getCell('LAND SALE PRICE')).trim();
         const bldgSalePrice = String(getCell('SALE PRICE')).trim();
         const bldgSaleDate = formatExcelDate(getCell('SALE DATE'));
-        const salePriceStr = databaseType === 'land' ? (landSalePrice || bldgSalePrice) : bldgSalePrice;
-        const saleDate = databaseType === 'land' ? (landSaleDate || bldgSaleDate) : bldgSaleDate;
+        const isLandDb = databaseType === 'land';
+        const salePriceStr = isLandDb ? (landSalePrice || bldgSalePrice) : (bldgSalePrice || landSalePrice);
+        const saleDate = isLandDb ? (landSaleDate || bldgSaleDate) : (bldgSaleDate || landSaleDate);
         // Researcher notes (M1..M10) so Quick find matches text like "LAND FOR THE APTS"
         const comments = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10']
           .map(c => String(getCell(c)).trim())
@@ -922,6 +924,18 @@ function UserDashboard() {
   const isIndustrial = databaseType === 'industrial';
   const unitLabel = isIndustrial ? 'Sq Ft' : 'Units';
   const perUnitLabel = isIndustrial ? '$ / SF' : '$ / Unit';
+  // Land parcels have no units or price per unit, so the table omits those columns
+  const isLand = databaseType === 'land';
+  const tableColumns = ([
+    ['propertyName', 'Property'],
+    ['city', 'City'],
+    ['county', 'County'],
+    ...(isLand ? [] : [['units', unitLabel]]),
+    ['salePrice', 'Price'],
+    ...(isLand ? [['acres', 'Acres']] : [['pricePerUnit', perUnitLabel]]),
+    ['saleDate', 'Sale Date'],
+    ['insiderDate', 'Insider Date'],
+  ] as [SortKey, string][]);
 
   const formatCurrency = (value: string) => {
     if (!value) return '';
@@ -1777,6 +1791,7 @@ function UserDashboard() {
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                 />
               </div>
+              {!isLand && (<>
               <div className="flex gap-2 items-center">
                 <input
                   type="number"
@@ -1811,6 +1826,7 @@ function UserDashboard() {
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                 />
               </div>
+              </>)}
             </div>
             </>
             )}
@@ -1837,16 +1853,7 @@ function UserDashboard() {
               <table className="w-full">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
-                    {([
-                      ['propertyName', 'Property'],
-                      ['city', 'City'],
-                      ['county', 'County'],
-                      ['units', unitLabel],
-                      ['salePrice', 'Price'],
-                      ['pricePerUnit', perUnitLabel],
-                      ['saleDate', 'Sale Date'],
-                      ['insiderDate', 'Insider Date'],
-                    ] as [SortKey, string][]).map(([key, label]) => (
+                    {tableColumns.map(([key, label]) => (
                       <th
                         key={key}
                         onClick={() => toggleSort(key)}
@@ -1871,9 +1878,11 @@ function UserDashboard() {
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{titleCase(property.city)}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{titleCase(property.county)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatUnits(property.units)}</td>
+                        {!isLand && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatUnits(property.units)}</td>}
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatCurrency(property.salePrice)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatPerUnit(property.pricePerUnit)}</td>
+                        {isLand
+                          ? <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.acres}</td>
+                          : <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatPerUnit(property.pricePerUnit)}</td>}
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.saleDate}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.insiderDate}</td>
                         <td className="px-2 py-3 text-sm whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
@@ -1897,7 +1906,7 @@ function UserDashboard() {
                       </tr>
                       {expandedRow === idx && (
                         <tr>
-                          <td colSpan={9} className="px-4 py-4 bg-gray-50">
+                          <td colSpan={tableColumns.length + 1} className="px-4 py-4 bg-gray-50">
                             <div className="grid grid-cols-2 gap-4 text-sm">
                               <div className="col-span-2"><span className="font-semibold">Full name:</span> {titleCase(property.propertyName)}</div>
                               <div><span className="font-semibold">Address:</span> {titleCase(property.address)}</div>

@@ -42,4 +42,10 @@ describe('address abbreviations and filler words', () => {
     expect(searchTokens('the mason augusta')).toEqual(['mason', 'augusta']);
     expect(searchTokens('the')).toEqual(['the']);
   });
+
+  it('matches "apartments" against a researcher note saying APTS', () => {
+    const note = canonicalText('LAND FOR THE APTS. 12 ACRES ZONED RM-8');
+    expect(searchTokens('apartment land cobb').filter(t => note.includes(t))).toEqual(['apts', 'land']);
+    expect(searchTokens('LAND FOR THE APTS').every(t => note.includes(t))).toBe(true);
+  });
 });

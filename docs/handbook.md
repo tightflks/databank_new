@@ -63,7 +63,8 @@ return to this week's list.
 Type any part of a name, former name, city, address or owner. Spelling doesn't have to be
 exact — *Austel* finds *Austell*. Street types can be spelled out or abbreviated (*1898 spring
 road smyrna* finds *1898 SPRING RD.*), and words like *the* are ignored, so *the mason augusta*
-finds *Mason Augusta*.
+finds *Mason Augusta*. If no property matches every word you typed, Quick find shows the
+closest matches instead and says so above the table.
 
 ![Quick find](images/07-quick-find.png)
 

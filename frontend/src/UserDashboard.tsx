@@ -89,6 +89,7 @@ function UserDashboard() {
   // Property search states
   const [properties, setProperties] = useState<Property[]>([]);
   const [filteredProperties, setFilteredProperties] = useState<Property[]>([]);
+  const [partialMatch, setPartialMatch] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' } | null>(null);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -431,15 +432,17 @@ function UserDashboard() {
       // Parcel numbers are typed with or without spacing (111012003 vs 111 012 003)
       const digits = searchQuery.replace(/\D/g, '');
       const asParcel = digits.length >= 6 && /^[\d\s-]+$/.test(searchQuery.trim());
-      filtered = filtered.filter(p => {
-        if (asParcel && String(p.parcel || '').replace(/\D/g, '').includes(digits)) return true;
+      // Count how many words each property matches; show full matches, otherwise the best
+      // partial matches (at least one word, or half the words for longer queries) so a search
+      // like "the mason augusta" never comes back empty when the property exists.
+      const scored = filtered.map(p => {
+        if (asParcel && String(p.parcel || '').replace(/\D/g, '').includes(digits)) return { p, hits: tokens.length };
         // Search across all string values in the property object
         const allValues = canonicalText(
           Object.values(p)
             .filter(v => typeof v === 'string')
             .join(' ')
         );
-        if (tokens.every(token => allValues.includes(token))) return true;
         const words = wordsOf(
           canonicalText(
             [p.propertyName, p.city, p.county, p.owner, p.seller, p.address, p.streetName, p.marketArea]
@@ -447,8 +450,15 @@ function UserDashboard() {
               .join(' ')
           )
         );
-        return tokens.every(token => tokenMatches(token, allValues, words));
+        const hits = tokens.filter(token => tokenMatches(token, allValues, words)).length;
+        return { p, hits };
       });
+      const best = Math.max(0, ...scored.map(s => s.hits));
+      const needed = best === tokens.length ? best : Math.max(1, Math.ceil(tokens.length / 2));
+      filtered = best >= needed ? scored.filter(s => s.hits === best).map(s => s.p) : [];
+      setPartialMatch(filtered.length > 0 && best < tokens.length);
+    } else {
+      setPartialMatch(false);
     }
     
     // Location filters
@@ -1796,6 +1806,7 @@ function UserDashboard() {
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm text-gray-600">
                 Showing <span className="font-semibold">{filteredProperties.length.toLocaleString()}</span> of <span className="font-semibold">{properties.length.toLocaleString()}</span> properties
+                {partialMatch && <span className="ml-2 text-amber-700">· no exact match for every word — showing the closest matches</span>}
               </p>
               {(activeFilterCount > 0 || propertySearchText) && (
                 <button

@@ -68,7 +68,9 @@ closest matches instead and says so above the table.
 
 Quick find also searches the research notes on every record, so in the Land database
 *land for apartments* (or *apts*) finds parcels our researchers noted as bought for apartments.
-For land sales, the Sale Date and Sale Price columns show the land transaction itself.
+In the Land database the table shows Acres in place of Units and price per unit, and the Sale
+Date and Price columns show the land transaction itself. In every other database a record with
+no building sale falls back to its land sale, so the columns are never left blank when a sale exists.
 
 ![Quick find](images/07-quick-find.png)
 

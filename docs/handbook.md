@@ -136,7 +136,8 @@ The same report as a PDF with the Databank letterhead, ready to forward to a cli
 ### Export to Excel
 
 Whatever is in the table — a filtered list or an Ask AI result — downloads as a spreadsheet
-with the **Export to Excel** button.
+with the **Export to Excel** button. Exports are part of your Databank subscription; we keep a
+count of how many records are exported so we can plan the service fairly.
 
 ## 8. Dashboard and Weekly Reports
 
@@ -179,6 +180,11 @@ for an address, the card shows a map of the location instead.
 
 **Can I see the property on a map?** Yes — click **View on map** on the property card or in
 Property History, or **Open in Google Maps** for directions.
+
+**Is my activity on the site tracked?** Databank keeps a simple record on its own server of
+what is used — searches, questions asked, reports opened and records exported — to improve the
+research and, in future, to account for exports by company. No third-party analytics or
+advertising services are involved.
 
 **Can I save a search?** Not yet — export it to Excel, or simply ask Ask AI the same question
 again.

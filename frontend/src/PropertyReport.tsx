@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Loader2, AlertCircle, X, FileDown } from 'lucide-react';
 import { fmtDate, titleCase } from './utils/fmt';
 import { downloadReportPdf } from './utils/reportPdf';
+import { trackUsage } from './utils/usage';
 
 // Customer-readable report for one property (Ask AI "Report" button). Plain
 // words, no Reflex field names: what it is, who owns it, who owned it before,
@@ -33,7 +34,7 @@ export function PropertyReport({ type, id, onClose }: { type: string; id: string
     setError(null);
     axios
       .get<Report>(`${API_URL}/api/dropbox/report`, { params: { type, id }, signal: ctrl.signal })
-      .then((res) => setR(res.data))
+      .then((res) => { setR(res.data); trackUsage('report', { detail: res.data.name || id, database_type: type.toLowerCase() }); })
       .catch((e: unknown) => {
         if (axios.isCancel(e)) return;
         setError(axios.isAxiosError(e) ? e.response?.data?.error || e.message : 'Request failed');

@@ -13,6 +13,7 @@ import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 import { registerPhotoRoutes, photosConfigured } from './photos';
 import { registerStatsRoutes } from './stats';
+import { registerUsageRoutes, recordUsage } from './usage';
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -687,6 +688,7 @@ app.post('/api/export/xlsx', rateLimit(60, 'Export limit reached ({n} an hour)')
   const buf: Buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
   const safe = String(filename || 'databank-export').replace(/[^\w.-]+/g, '-').slice(0, 80);
+  recordUsage(req, { kind: 'export', detail: safe, rows: rows.length, databaseType: safe.split('-')[1] });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${safe}.xlsx"`);
   res.send(buf);
@@ -808,6 +810,7 @@ app.get('/api/dropbox/report.pdf', rateLimit(60, 'Report limit reached ({n} an h
       await page.setContent(propertyReportHtml(r), { waitUntil: 'load' });
       const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } });
       const slug = (r.name || r.id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
+      recordUsage(req, { kind: 'pdf', detail: r.name || r.id, databaseType: DATABASES.find((d) => d.type === type)?.id });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="databank-${slug || 'property'}.pdf"`);
       res.send(Buffer.from(pdf));
@@ -874,6 +877,7 @@ app.post('/api/market-snapshot.pdf', rateLimit(60, 'Report limit reached ({n} an
       await page.setContent(snapshotHtml(s), { waitUntil: 'load' });
       const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } });
       const slug = `${s.database} ${s.scope}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
+      recordUsage(req, { kind: 'pdf', detail: `snapshot: ${s.database} ${s.scope}`.trim(), databaseType: s.database.toLowerCase() });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="databank-snapshot-${slug || 'market'}.pdf"`);
       res.send(Buffer.from(pdf));
@@ -2648,9 +2652,11 @@ Respond with ONLY a JSON object: "mode", the applicable fields (omit ones that d
         before: s(filters.before || filters.sale_date_before || filters.land_sale_date_before),
       });
       const summary = await summarizeHistoryAnswer(apiKey, query.trim(), answer);
+      recordUsage(req, { kind: 'ask', detail: query.trim(), databaseType, rows: typeof answer.total === 'number' ? answer.total : null });
       return res.json({ filters, history: summary ? { ...answer, summary } : answer });
     }
 
+    recordUsage(req, { kind: 'ask', detail: query.trim(), databaseType });
     res.json({ filters });
   } catch (error) {
     console.error('Error in NL search:', error);
@@ -2921,6 +2927,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 registerDropboxRoutes(app);
 registerPhotoRoutes(app, db);
 registerStatsRoutes(app, db);
+registerUsageRoutes(app, db);
 
 // Serve the built frontend (production)
 const frontendDist = path.join(__dirname, '../../frontend/dist');

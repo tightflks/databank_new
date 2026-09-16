@@ -4,6 +4,7 @@ import { Loader2, AlertCircle, X, ExternalLink, Clock, FileSpreadsheet, FileText
 import { PropertyReport } from './PropertyReport';
 import { downloadReportPdf } from './utils/reportPdf';
 import PropertyMap from './PropertyMap';
+import { trackUsage } from './utils/usage';
 
 // Property Search over the Dropbox archive of weekly Reflex files.
 //   Properties   — one record per property across every synced week: current
@@ -120,7 +121,7 @@ export function Detail({ type, id, onClose }: { type: string; id: string; onClos
     setError(null);
     axios
       .get<PropertyDetail>(`${API_URL}/api/dropbox/properties`, { params: { type, id }, signal: ctrl.signal })
-      .then((res) => setP(res.data))
+      .then((res) => { setP(res.data); trackUsage('history', { detail: res.data.name || id, database_type: type.toLowerCase() }); })
       .catch((e: unknown) => {
         if (axios.isCancel(e)) return;
         setError(errorMessage(e));

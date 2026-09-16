@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import PropertyPhoto from './PropertyPhoto';
 import PropertyMap from './PropertyMap';
@@ -12,6 +12,7 @@ import { tokenMatches, wordsOf, canonicalText, searchTokens } from './utils/fuzz
 import { parseComments } from './utils/comments';
 import { PropertyReport } from './PropertyReport';
 import { downloadReportPdf } from './utils/reportPdf';
+import { trackUsage } from './utils/usage';
 
 const PAGE_SIZE = 100;
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
@@ -99,6 +100,8 @@ function UserDashboard() {
   const [snapshotting, setSnapshotting] = useState(false);
   const [propertySearchText, setPropertySearchText] = useState('');
   const searchQuery = useDebounced(propertySearchText, 250);
+  const settledQuery = useDebounced(searchQuery, 1500);
+  const resultCount = useRef(0);
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedCounties, setSelectedCounties] = useState<string[]>([]);
   const [countyDropdownOpen, setCountyDropdownOpen] = useState(false);
@@ -262,6 +265,14 @@ function UserDashboard() {
   useEffect(() => {
     filterReports();
   }, [searchText, reports]);
+
+  useEffect(() => {
+    if (settledQuery.trim().length >= 3) trackUsage('search', { database_type: databaseType, detail: settledQuery.trim(), rows: resultCount.current });
+  }, [settledQuery]);
+
+  useEffect(() => {
+    trackUsage('page_view', { database_type: databaseType, detail: activeView });
+  }, [activeView, databaseType]);
 
   useEffect(() => {
     applyPropertyFilters();
@@ -593,6 +604,7 @@ function UserDashboard() {
         return sgn * String(a[key] || '').localeCompare(String(b[key] || ''));
       });
     }
+    resultCount.current = filtered.length;
     setFilteredProperties(filtered);
   };
 

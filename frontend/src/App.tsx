@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare, Camera, BookOpen } from 'lucide-react';
+import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare, Camera, BookOpen, BarChart3 } from 'lucide-react';
 import FeedbackWidget from './FeedbackWidget';
 import FeedbackList from './FeedbackList';
 import PhotoReview from './PhotoReview';
+import UsageList from './UsageList';
+import { trackUsage } from './utils/usage';
 import UserDashboard from './UserDashboard';
 import Home from './Home';
 import LoginModal from './LoginModal';
@@ -61,13 +63,17 @@ type PublicView = 'home' | 'search' | 'help';
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback' | 'photos'>(ADMIN_ROUTE ? 'generate' : 'user');
+  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback' | 'photos' | 'usage'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [publicView, setPublicView] = useState<PublicView>(
     window.location.hash === '#search' ? 'search' : window.location.hash.startsWith('#help') ? 'help' : 'home',
   );
   const [loginOpen, setLoginOpen] = useState(false);
+
+  useEffect(() => {
+    if (!ADMIN_ROUTE && publicView !== 'search') trackUsage('page_view', { detail: publicView });
+  }, [publicView]);
 
   const goHomeSection = (id: string) => {
     setPublicView('home');
@@ -412,6 +418,17 @@ function App() {
             <Camera className="w-5 h-5" />
             Photos
           </button>
+          <button
+            onClick={() => setActiveTab('usage')}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'usage'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/80'
+            }`}
+          >
+            <BarChart3 className="w-5 h-5" />
+            Usage
+          </button>
         </div>}
 
         {/* Tab Content */}
@@ -683,6 +700,8 @@ function App() {
           <FeedbackList />
         ) : activeTab === 'photos' ? (
           <PhotoReview />
+        ) : activeTab === 'usage' ? (
+          <UsageList />
         ) : (
           <div className="space-y-6">
             {/* Database Filter */}

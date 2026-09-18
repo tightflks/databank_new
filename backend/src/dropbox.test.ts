@@ -1,4 +1,18 @@
-import { ASK_QUESTIONS, fixCentury } from './dropbox';
+import { ASK_QUESTIONS, fixCentury, isTestRecord } from './dropbox';
+
+describe('isTestRecord', () => {
+  it("drops Reflex's all-ones test record, as text or as a number", () => {
+    expect(isTestRecord('1111111111111111111111')).toBe(true);
+    expect(isTestRecord(1.1111111111111111e21)).toBe(true);
+    expect(isTestRecord('1.1111111111111116e+30')).toBe(true);
+  });
+  it('keeps real names, including numeric-looking ones', () => {
+    expect(isTestRecord('7 Brew Coffee')).toBe(false);
+    expect(isTestRecord('1010 Midtown')).toBe(false);
+    expect(isTestRecord(1234)).toBe(false);
+    expect(isTestRecord('')).toBe(false);
+  });
+});
 
 describe('fixCentury', () => {
   it('moves two-digit-year typos into the 2000s', () => {

@@ -978,6 +978,48 @@ function UserDashboard() {
       .join(' ');
   };
 
+  // Every party on the record with its rep, phone and mailing address, from the source's
+  // prefixed columns (O = owner, S = seller, B = broker, L = lender, C L = construction lender…).
+  const buildContacts = (property: Property) => {
+    const get = (col: string) => getReportValue(property, col);
+    const getAny = (...cols: string[]) => getReportValueAny(property, ...cols);
+    const address = (prefix: string) => {
+      const street = titleCase(`${get(`${prefix} STREET NUMBER`)} ${get(`${prefix} STREET NAME`)}`.trim());
+      const suite = get(`${prefix} SUITE NUMBER`);
+      const box = get(`${prefix} P O BOX NUMBER`);
+      const cityLine = [titleCase(get(`${prefix} CITY`)), [get(`${prefix} STATE`), get(`${prefix} ZIP`)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+      return [street, suite && `Suite ${suite}`, box && `P.O. Box ${box}`, cityLine].filter(Boolean).join(', ');
+    };
+    const party = (label: string, name: string, prefix: string, phones: string[], reps: string[] = [`${prefix} REP`, `${prefix} REP2`]) => {
+      if (!name) return [];
+      return [
+        { label, value: titleCase(name) },
+        { label: `${label} Contact`, value: [titleCase(reps.map(get).filter(Boolean).join(' / ')), getAny(...phones)].filter(Boolean).join(' · ') },
+        { label: `${label} Address`, value: address(prefix) },
+      ];
+    };
+    return [
+      ...party('Owner', get('OWNER') || get('TAX OWNER'), 'O', ['O PHONE', 'O PHONE2\\FAX', 'O PHONE2 FAX']),
+      ...party('2nd Owner', get('2ND OWNER'), '2ND OWNER', ['2ND OWNER PHONE']),
+      ...party('Seller', getAny('SELLER\\FORECLOSEE', 'SELLER'), 'S', ['S PHONE']),
+      ...party('Broker', get('BROKER'), 'B', ['BROKER PHONE', 'B PHONE']),
+      ...(get('BUILDER') ? [{ label: 'Builder', value: titleCase(get('BUILDER')) }] : []),
+      ...party('Lender', get('LENDER'), 'L', ['L PHONE']),
+      ...party('Construction Lender', get('C LENDER'), 'C L', ['C L PHONE']),
+      ...party('Leasing', getAny('LEASING COMPANY', 'LEASING REP'), 'LEASING', ['LEASING PHONE']),
+      ...party('Management', get('MANAGEMENT COMPANY'), 'MANAGEMENT', ['MANAGEMENT PHONE']),
+      ...(get('ATTORNEY') ? [{ label: 'Attorney', value: [titleCase(get('ATTORNEY')), get('ATTORNEY PHONE')].filter(Boolean).join(' · ') }] : []),
+      ...(get('ONSITE PHONE') ? [{ label: 'Onsite Telephone', value: get('ONSITE PHONE') }] : []),
+    ].filter((f) => f.value);
+  };
+
+  // Every non-empty column of the record, in the source file's order: nothing is left out of the card.
+  const allFields = (property: Property) =>
+    excelHeaders
+      .map((h: string, i: number) => ({ label: String(h || '').trim(), value: property.raw?.[i] }))
+      .filter((f) => f.label && f.value !== undefined && f.value !== null && String(f.value).trim() !== '')
+      .map((f) => ({ label: f.label, value: f.label.includes('DATE') ? formatExcelDate(f.value) : String(f.value).trim() }));
+
   const buildReportSections = (property: Property) => {
     const get = (col: string) => getReportValue(property, col);
     const getAny = (...cols: string[]) => getReportValueAny(property, ...cols);
@@ -1015,6 +1057,10 @@ function UserDashboard() {
           { label: 'Attorney Name', value: titleCase(get('ATTORNEY')) },
           { label: 'Attorney Telephone', value: get('ATTORNEY PHONE') },
         ],
+      },
+      {
+        title: 'Contacts',
+        fields: buildContacts(property),
       },
       {
         title: 'Financial Highlights',
@@ -2045,7 +2091,7 @@ function UserDashboard() {
                   city={selectedProperty.city}
                   zip={selectedProperty.zip}
                 />
-                {buildReportSections(selectedProperty).map((section) => (
+                {buildReportSections(selectedProperty).filter((section) => section.fields.length > 0).map((section) => (
                   <div key={section.title}>
                     <h3 className="text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4">
                       {section.title}
@@ -2085,6 +2131,26 @@ function UserDashboard() {
                         <p className="mt-2 whitespace-pre-wrap leading-relaxed">{raw}</p>
                       </details>
                     </div>
+                  );
+                })()}
+
+                {/* Every field on the record */}
+                {(() => {
+                  const fields = allFields(selectedProperty);
+                  return (
+                    <details className="text-sm">
+                      <summary className="cursor-pointer text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4 select-none">
+                        Every field on record <span className="text-sm font-normal text-gray-500">({fields.length} of {excelHeaders.filter(Boolean).length} fields have a value)</span>
+                      </summary>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1">
+                        {fields.map((f) => (
+                          <div key={f.label} className="flex justify-between gap-4 py-1 border-b border-gray-100">
+                            <span className="font-mono text-xs text-gray-500 uppercase whitespace-nowrap">{f.label}</span>
+                            <span className="text-gray-900 text-right break-words">{f.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
                   );
                 })()}
               </div>

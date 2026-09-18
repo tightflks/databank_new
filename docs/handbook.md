@@ -91,6 +91,23 @@ lender, and Databank's notes.
 
 Top right of the card: **One-page report** and **Download PDF** (§7), and **×** to close.
 
+### What the card shows
+
+- **Property Profile** — name, address, city, county, market area, zip, district, cross road, parcel.
+- **Property Details** — Insider dates, description, units and price per unit (square feet for
+  Industrial), tax owner, owner/buyer, seller, acres, loan amount, attorney.
+- **Financial Highlights** — sale amount and date, land sale amount and date, equity, down
+  payment, purchase note, income figures.
+- **Contacts** — every party on the record with its representative, telephone and mailing
+  address: owner, second owner, seller, broker, builder, lender, construction lender, leasing
+  company, management company, attorney and the on-site telephone. A line only appears when the
+  research file has that information.
+- **Databank Notes** — the researcher's comments, with the key facts pulled out.
+- **Every field on record** — collapsed at the bottom of the card. Open it to see every column
+  the research file holds for this property, in the file's own order, with a count of how many
+  have a value. Nothing in the weekly file is left out of the site; the sections above are just
+  the readable layout of the same data.
+
 ### Photo and map
 
 Under the title you'll see the property's Street View photo. Where Google has no street-level
@@ -191,5 +208,14 @@ again.
 
 **Offices and Retail show the same properties — is that right?** Yes; Databank publishes
 them as one file.
+
+**Are any records left out?** Only the research system's own placeholder records — a row
+whose every field is a run of 1s (city "AAA"), used to test field widths — are hidden. Every
+real property in the weekly file is shown, with every field it carries (see §5, *Every field on
+record*).
+
+**Is broker, lender or owner contact information available?** Yes — the **Contacts** section of
+the property card lists each party's representative, telephone and mailing address wherever the
+research file has them.
 
 **Who do I contact?** Databank Atlanta · (404) 872-8880 · or use the **Feedback** button.

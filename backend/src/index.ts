@@ -7,7 +7,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
-import { registerDropboxRoutes, dropboxConfigured, latestSheet, DATABASES } from './dropbox';
+import { registerDropboxRoutes, dropboxConfigured, latestSheet, isTestRecord, DATABASES } from './dropbox';
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
@@ -193,7 +193,10 @@ function getUploadByIdFromDb(id: number): any {
 
 function getExcelDataFromDb(uploadId: number): any[][] {
   const rows = getExcelDataStmt.all(uploadId) as any[];
-  return rows.map((row: any) => JSON.parse(row.data));
+  const data: any[][] = rows.map((row: any) => JSON.parse(row.data));
+  const nameIdx = (data[0] ?? []).findIndex((h: unknown) => String(h ?? '').trim() === 'P NAME');
+  if (nameIdx < 0) return data;
+  return data.filter((r, i) => i === 0 || !isTestRecord(r[nameIdx]));
 }
 
 function deleteUploadFromDb(id: number): boolean {

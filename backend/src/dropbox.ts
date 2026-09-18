@@ -125,6 +125,13 @@ async function summary() {
   return data;
 }
 
+// Reflex's field-width test record: every field is a run of the same digit (name "1111…", city "AAA").
+// As a number (the uploads table stores numeric-looking cells as numbers) it prints as 1.1111e+21.
+const TEST_NAME = /^(\d)\1{3,}$|^(\d)(\.\2{3,}\d{0,3})?e\+\d+$/;
+export function isTestRecord(name: unknown): boolean {
+  return TEST_NAME.test(String(name ?? '').trim());
+}
+
 // ---------- Rows: one CSV, one week ----------
 
 // Any CSV the sync wrote for that week (APTS, APTS2, IND3…): a bare upper-case name, so no path tricks.
@@ -145,11 +152,13 @@ async function loadRows(type: string, week: string): Promise<Parsed> {
   const meta = JSON.parse(res.headers.get('Dropbox-API-Result') ?? '{}') as { rev?: string };
   const all = parseCsv(await res.text());
   const header = (all[0] ?? []).map((h) => h.trim());
+  const nameIdx = header.indexOf('P NAME');
   const body = all
     .slice(1)
     .map((r) => header.map((_, i) => (r[i] ?? '').trim()))
     // Reflex pads the database with empty and half-typed records; a real one has several fields.
-    .filter((r) => r.filter((v) => v).length >= 3);
+    .filter((r) => r.filter((v) => v).length >= 3)
+    .filter((r) => nameIdx < 0 || !isTestRecord(r[nameIdx]));
   const used = header.map((_, i) => body.some((r) => r[i]));
   const parsed = {
     at: Date.now(),
@@ -259,6 +268,7 @@ async function loadHistory(type: string): Promise<Loaded> {
   const res = await download(`${CSV_ROOT}/history/${type}.json.gz`);
   if (!res) throw new Error(`No property history for ${type} yet — run tools/rxd/history.py --upload`);
   const hist = JSON.parse(gunzipSync(Buffer.from(await res.arrayBuffer())).toString('utf-8')) as History;
+  hist.properties = hist.properties.filter((p) => !isTestRecord(p.name));
   const summaries = hist.properties.map(summarize);
   const haystack = hist.properties.map((p) =>
     [p.name, p.address, p.city, p.county, p.parcel, p.current['P ZIP'], p.current['TAX OWNER'], p.current['OWNER'], p.current['SELLER\\FORECLOSEE'], p.current['SELLER'],

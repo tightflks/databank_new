@@ -13,9 +13,11 @@ history at your fingertips: search it, ask it questions in plain English, and do
   **Continue as guest**.
 - **☰ menu** (top right) — this Handbook and the Home / Search switch.
 
-Six databases, one tab each: **Apartments · Franchise · Industrial · Land · Offices · Retail**.
-Everything on the Search screen — the table, Ask AI, Dashboard, History — follows the tab you
-pick. *Offices and Retail draw from the same Databank file, so they show the same properties.*
+Five databases, matching the five Databank reports, one tab each: **Apartments · Industrial ·
+Land · Offices · Retail**. Everything on the Search screen — the table, Ask AI, Dashboard,
+History — follows the tab you pick. *Offices and Retail draw from the same office-and-shopping
+file, so they show the same properties; Retail also carries Databank's franchise records, marked
+with a small* Franchise *tag in the table (type `franchise` in Quick find to see only those).*
 
 ## 2. The Search screen
 
@@ -207,7 +209,13 @@ advertising services are involved.
 again.
 
 **Offices and Retail show the same properties — is that right?** Yes; Databank publishes
-them as one file.
+them as one file. Retail additionally includes the franchise records, which Databank sells as
+part of the Retail report — they carry a *Franchise* tag in the table, and their card lists the
+file they came from under *Every field on record*.
+
+**Where is the shopping-center information?** In the Offices / Retail database. Each record's
+*Every field on record* list carries PROJECT TYPE (shopping center, strip center, office…) and
+the anchor tenants under ANCHOR1 / ANCHOR2.
 
 **Are any records left out?** Only the research system's own placeholder records — a row
 whose every field is a run of 1s (city "AAA"), used to test field widths — are hidden. Every

@@ -36,9 +36,13 @@ const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://l
 // Archive (Dropbox) file type per database — the key the property-history API uses.
 const ARCHIVE_TYPE: Record<string, string> = { apartments: 'APTS', franchise: 'FRANCHIS', industrial: 'IND', land: 'LANDSALE', offices: 'OFFSHOP', retail: 'OFFSHOP' };
 
+// Customers buy five reports; Databank's Franchise file is sold inside the Retail report, so the
+// Retail tab shows the office-and-shopping file with the Franchise records merged in.
+const MERGED_INTO: Record<string, string[]> = { retail: ['franchise'] };
+const SOURCE_HEADER = 'DATABANK FILE';
+
 const DATABASE_OPTIONS = [
   { value: 'apartments', label: '🏢 Apartments' },
-  { value: 'franchise', label: '🏪 Franchise' },
   { value: 'industrial', label: '🏭 Industrial' },
   { value: 'land', label: '🌳 Land' },
   { value: 'offices', label: '🏛️ Offices' },
@@ -132,6 +136,7 @@ function UserDashboard() {
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
+  const [historyDb, setHistoryDb] = useState<string | null>(null);
   const [reportFor, setReportFor] = useState<{ type: string; id: string } | null>(null);
   const [reportBusy, setReportBusy] = useState<'report' | 'pdf' | null>(null);
 
@@ -316,26 +321,40 @@ function UserDashboard() {
       setLatestUploadName('');
       setExcelHeaders([]);
 
-      const uploadsResponse = await axios.get(`${API_URL}/api/uploads?database_type=${databaseType}`);
-      const uploads = uploadsResponse.data.uploads;
-      
-      if (uploads.length === 0) return;
-      
-      // Get the latest upload (first one, as they're sorted by date DESC)
-      const latestUpload = uploads[0];
-      setLatestUploadName(latestUpload.original_filename);
-      
-      // Load the Excel data
-      const dataResponse = await axios.get(`${API_URL}/api/uploads/${latestUpload.id}/data`);
-      const excelData = dataResponse.data.data;
-      
-      if (!excelData || excelData.length === 0) return;
-      
-      const headers = excelData[0];
-      const dataRows = excelData.slice(1);
+      // Latest upload of this database, plus of any database folded into it (Franchise → Retail).
+      type Cell = string | number | null | undefined;
+      type UploadFile = { name: string; data: Cell[][] };
+      const latestData = async (db: string): Promise<UploadFile | null> => {
+        const uploadsResponse = await axios.get(`${API_URL}/api/uploads?database_type=${db}`);
+        const uploads = uploadsResponse.data.uploads;
+        if (uploads.length === 0) return null;
+        // Uploads are sorted by date DESC, so the first one is the latest
+        const dataResponse = await axios.get(`${API_URL}/api/uploads/${uploads[0].id}/data`);
+        const data = dataResponse.data.data;
+        return data && data.length ? { name: uploads[0].original_filename, data } : null;
+      };
+      const sources = (await Promise.all([databaseType, ...(MERGED_INTO[databaseType] || [])].map(async (db) => ({ db, file: await latestData(db) }))))
+        .filter((s): s is { db: string; file: UploadFile } => s.file !== null);
+      if (sources.length === 0) return;
+      setLatestUploadName(sources.map((s) => s.file.name).join(', '));
+
+      // Files name a few columns differently, so merged rows are re-laid onto the union of the headers,
+      // each tagged with the file it came from.
+      const headers: string[] = sources.length > 1 ? [SOURCE_HEADER] : [];
+      for (const s of sources) for (const h of s.file.data[0]) { const t = String(h ?? '').trim(); if (t && !headers.some((x) => x.trim().toUpperCase() === t.toUpperCase())) headers.push(t); }
+      const sourceLabel = (db: string) => db.charAt(0).toUpperCase() + db.slice(1);
+      const dataRows: Cell[][] = sources.flatMap((s) => {
+        const pos = s.file.data[0].map((h) => headers.findIndex((x) => x.trim().toUpperCase() === String(h ?? '').trim().toUpperCase()));
+        return s.file.data.slice(1).map((r) => {
+          const out: Cell[] = new Array(headers.length).fill('');
+          if (sources.length > 1) out[0] = sourceLabel(s.db);
+          pos.forEach((p, i) => { if (p >= 0) out[p] = r[i]; });
+          return out;
+        });
+      });
       setExcelHeaders(headers);
       
-      const processedProperties = dataRows.map((row: any[]) => {
+      const processedProperties = dataRows.map((row) => {
         const getCell = (header: string) => {
           const idx = headers.findIndex((h: string) => h && h.trim().toLowerCase() === header.toLowerCase());
           return idx >= 0 ? (row[idx] || '') : '';
@@ -424,6 +443,7 @@ function UserDashboard() {
           ownerAttention: String(getCellAny('OWNER2\\ATTENTION', 'ATTENTION')).trim(),
           seller: String(getCellAny('SELLER\\FORECLOSEE', 'SELLER')).trim(),
           loanAmount: String(getCellAny('$ LOAN', 'PERMANENT LOAN')).trim(),
+          sourceFile: String(getCell(SOURCE_HEADER)).trim(),
           raw: row
         };
       }).filter((p: Property) => p.propertyName);
@@ -700,8 +720,11 @@ function UserDashboard() {
 
   // The row card is this week's record; the one-page report lives on the archive property.
   // Find it by parcel, then by name/address, and take the single best match.
+  // A merged row (Franchise inside Retail) keeps its own archive file.
+  const archiveDbOf = (p: Property) => (p.sourceFile ? String(p.sourceFile).toLowerCase() : databaseType);
+
   const findArchiveProperty = async (p: Property): Promise<{ type: string; id: string } | null> => {
-    const type = ARCHIVE_TYPE[databaseType];
+    const type = ARCHIVE_TYPE[archiveDbOf(p)];
     if (!type) return null;
     const queries = [String(p.parcel || '').trim(), primaryName(p.propertyName), String(p.address || '').trim()].filter(Boolean);
     for (const q of queries) {
@@ -733,6 +756,7 @@ function UserDashboard() {
 
   const showHistoryFor = (p: Property) => {
     setHistoryQuery(primaryName(p.propertyName) || p.address);
+    setHistoryDb(archiveDbOf(p));
     setActiveView('history');
   };
 
@@ -1102,7 +1126,7 @@ function UserDashboard() {
             {DATABASE_OPTIONS.map((option) => (
               <button
                 key={option.value}
-                onClick={() => setDatabaseType(option.value)}
+                onClick={() => { setDatabaseType(option.value); setHistoryDb(null); }}
                 className={`px-4 py-3 rounded-lg font-semibold transition-all ${
                   databaseType === option.value
                     ? 'bg-blue-600 text-white shadow-md'
@@ -1139,7 +1163,7 @@ function UserDashboard() {
             Search Database
           </button>
           <button
-            onClick={() => setActiveView('history')}
+            onClick={() => { setHistoryDb(null); setActiveView('history'); }}
             className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'history'
                 ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
@@ -1929,7 +1953,12 @@ function UserDashboard() {
                     <>
                       <tr key={idx} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedProperty(property)}>
                         <td className="px-4 py-3 text-sm font-medium text-gray-900 max-w-[280px]" title={titleCase(property.propertyName)}>
-                          <div className="truncate">{primaryName(property.propertyName)}</div>
+                          <div className="truncate">
+                            {primaryName(property.propertyName)}
+                            {property.sourceFile && property.sourceFile.toLowerCase() !== databaseType && (
+                              <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">{property.sourceFile}</span>
+                            )}
+                          </div>
                           {aliasNames(property.propertyName) && (
                             <div className="truncate text-xs font-normal text-gray-400">{aliasNames(property.propertyName)}</div>
                           )}
@@ -2022,7 +2051,7 @@ function UserDashboard() {
             )}
           </div>
         ) : activeView === 'history' ? (
-          <PropertyHistory databaseType={databaseType} fixedMode="history" initialQuery={historyQuery} />
+          <PropertyHistory databaseType={historyDb || databaseType} fixedMode="history" initialQuery={historyQuery} />
         ) : null}
 
         {reportFor && (

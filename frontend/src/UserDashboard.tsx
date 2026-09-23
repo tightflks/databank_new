@@ -372,12 +372,28 @@ function UserDashboard() {
         // Extract a 4-digit year from a value that may be a year or an Excel date serial
         const yearFromValue = (v: any): string => {
           if (v === undefined || v === null || String(v).trim() === '') return '';
-          const n = typeof v === 'number' ? v : parseFloat(String(v).trim());
-          if (isNaN(n)) return String(v).trim();
+          const str = String(v).trim();
+          // Text like "6/15/1985", "1985-86" or "Blt 1985": take the first 4-digit year.
+          // (parseFloat would read "6/15/1985" as 6, i.e. an Excel date in 1900.)
+          if (typeof v !== 'number') {
+            const m = str.match(/\b(1[5-9]\d{2}|2[01]\d{2})\b/);
+            if (m) return m[1];
+            if (!/^\d+(\.\d+)?$/.test(str)) return str;
+          }
+          const n = typeof v === 'number' ? v : parseFloat(str);
+          if (isNaN(n)) return str;
           if (n >= 1500 && n <= 2200) return String(Math.round(n));
-          const formatted = formatExcelDate(n);
-          const parts = formatted.split('/');
-          return parts.length === 3 ? parts[2] : formatted;
+          // Two-digit year ("85" -> 1985, "05" -> 2005).
+          if (n >= 0 && n < 100 && Number.isInteger(n)) {
+            const cutoff = (new Date().getFullYear() % 100) + 1;
+            return String(n < cutoff ? 2000 + n : 1900 + n);
+          }
+          // A genuine Excel date serial (> 2200 means 1906 onward).
+          if (n > 2200) {
+            const parts = formatExcelDate(n).split('/');
+            if (parts.length === 3) return parts[2];
+          }
+          return str;
         };
         
         // INSIDER DATE is the latest report the property appeared in; PREVIOUS INSIDER DATE 1..3 are the

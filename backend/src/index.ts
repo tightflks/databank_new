@@ -2553,9 +2553,9 @@ app.post('/api/nl-search', rateLimit(ASK_AI_PER_HOUR), async (req: Request, res:
 
 There are TWO kinds of questions. Decide first, and set "mode":
 
-(A) mode "current" — a search over this week's list of ${databaseType} properties (the default). Filter fields are below.
+(A) mode "current" — a search over this week's list of ${databaseType} properties (the default). Filter fields are below. Each property's SALE DATE is whatever its most recent recorded sale is, however old — so "sold in the last N years/months", "sold since <date>", "sold in <year>" are answered here with sale_date_after/before, NOT mode history, as long as the question is just "which properties sold when" and doesn't ask about repeat sales, prior owners, or rankings (those go to mode history below). A rolling window like "last 2 years" means sale_date_after = today minus that span.
 
-(B) mode "history" — the question needs MORE THAN ONE WEEK of data: previous owners, who bought/sold a specific property, its sale history or timeline, what changed on a record, properties sold more than once, what appeared or dropped off the list, most active buyers/sellers over a period. For history set:
+(B) mode "history" — the question needs MORE THAN ONE WEEK of data: previous owners, who bought/sold a specific property, its sale history or timeline, what changed on a record, properties sold MORE THAN ONCE, what appeared or dropped off the list, MOST ACTIVE buyers/sellers over a period (a ranking). For history set:
 - question: one of ${JSON.stringify(dropboxAsk.ASK_QUESTIONS)}
     property_history = who owned / bought / sold / paid for a NAMED property, its previous owners, sale history, what changed on it (set subject)
     entity_history   = everything a company or person has bought or sold over time (set entity). Prefer this over mode current when the user says "ever", "history", "over the years", "since <year>"
@@ -2585,7 +2585,7 @@ LOCATION FILTERS (match values EXACTLY as listed, case-sensitive):
 
 DATE RANGE FILTERS (use ISO format YYYY-MM-DD):
 - insider_date_after / insider_date_before: INSIDER DATE (when record was published)
-- sale_date_after / sale_date_before: property SALE DATE. "sold before / after / in <year>", "sales prior to <year>" ALWAYS mean the SALE DATE, never year built — use min_year_built / max_year_built only when the user says "built" or "constructed".
+- sale_date_after / sale_date_before: property SALE DATE. "sold before / after / in <year>", "sales prior to <year>", "sold in the last N years/months" ALWAYS mean the SALE DATE, never year built — use min_year_built / max_year_built only when the user says "built" or "constructed". A relative window ("last 2 years") -> sale_date_after = today minus that span.
 - land_sale_date_after / land_sale_date_before: LAND SALE DATE
 
 ADDRESS FILTERS (partial, case-insensitive match):

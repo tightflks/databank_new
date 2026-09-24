@@ -7,7 +7,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
-import { registerDropboxRoutes, dropboxConfigured, latestSheet, isTestRecord, DATABASES } from './dropbox';
+import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, isTestRecord, DATABASES } from './dropbox';
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
@@ -2095,6 +2095,28 @@ app.post('/api/databases/sync-dropbox', requireAdmin, async (req: Request, res: 
     return res.status(400).json({ error: 'Dropbox is not configured (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN)' });
   }
   res.json({ results: await syncAllDatabasesFromDropbox() });
+});
+
+// Push one week's converted CSVs (APTS.csv, IND.csv, …) into the Dropbox archive by hand — for when the
+// scheduled zip→CSV sync did not run — then attach the week to every database.
+app.post('/api/databases/upload-week', requireAdmin, upload.array('files', 20), async (req: Request, res: Response) => {
+  if (!dropboxConfigured()) {
+    return res.status(400).json({ error: 'Dropbox is not configured (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN)' });
+  }
+  const week = String(req.body?.week ?? '').trim();
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || !files.length) {
+    return res.status(400).json({ error: 'week (YYYY-MM-DD) and at least one .csv file are required' });
+  }
+  try {
+    const uploaded = await uploadWeek(
+      week,
+      files.map((f) => ({ type: path.basename(f.originalname, path.extname(f.originalname)).toUpperCase(), body: f.buffer })),
+    );
+    res.json({ uploaded, results: await syncAllDatabasesFromDropbox() });
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : 'Dropbox upload failed' });
+  }
 });
 
 app.post('/api/databases/:type/sync-dropbox', requireAdmin, async (req: Request, res: Response) => {

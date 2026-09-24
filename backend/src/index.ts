@@ -11,7 +11,7 @@ import { registerDropboxRoutes, dropboxConfigured, latestSheet, isTestRecord, DA
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
-import { registerPhotoRoutes, photosConfigured } from './photos';
+import { registerPhotoRoutes, photosConfigured, getApprovedPhoto, fetchStaticMap, queuePhotoIfMissing } from './photos';
 import { registerStatsRoutes } from './stats';
 import { registerUsageRoutes, recordUsage } from './usage';
 const Database = require('better-sqlite3');
@@ -754,7 +754,7 @@ const money = (v: string) => { const n = Number(v); return v && !Number.isNaN(n)
 const num = (v: string) => { const n = Number(v); return v && !Number.isNaN(n) ? n.toLocaleString('en-US') : v || '—'; };
 const longDate = (iso: string) => { const d = new Date(iso.length === 10 ? iso + 'T12:00:00Z' : iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
 
-function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
+function propertyReportHtml(r: dropboxAsk.PropertyReport, media: { photo: Buffer | null; map: Buffer | null }): string {
   const where = [r.address, r.city, r.county ? `${r.county} County` : '', r.zip].filter(Boolean).join(', ');
   const last = r.saleList[r.saleList.length - 1];
   const sales = [...r.saleList].reverse();
@@ -769,6 +769,11 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
       (r.saleList.length > 1 ? `Databank has ${r.saleList.length} sales on record for this property. ` : '') +
       (owners.length > 1 ? `It has had ${owners.length} owners since Databank started tracking it in ${longDate(r.first)}.` : '')
     : `${esc(r.name)} is owned by ${esc(r.owner || 'an unrecorded owner')}. Databank has no sale on record for it.`;
+  const photoUri = media.photo ? `data:image/jpeg;base64,${media.photo.toString('base64')}` : null;
+  const mapUri = media.map ? `data:image/png;base64,${media.map.toString('base64')}` : null;
+  const mediaHtml = photoUri || mapUri
+    ? `<div class="media">${photoUri ? `<div class="shot"><img src="${photoUri}" alt="Street view"><div class="cap">Street view</div></div>` : ''}${mapUri ? `<div class="shot"><img src="${mapUri}" alt="Map"><div class="cap">Location</div></div>` : ''}</div>`
+    : '';
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     ${embeddedFontCss()}
     * { box-sizing: border-box; } body { font-family: Inter, Arial, sans-serif; color: #111827; margin: 0; padding: 40px 44px; font-size: 12.5px; line-height: 1.5; }
@@ -776,6 +781,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
     .brand b { font-size: 15px; color: #1e3a8a; letter-spacing: .04em; } .brand span { color: #6b7280; font-size: 11px; }
     h1 { font-size: 24px; margin: 0 0 2px; } .sub { color: #4b5563; margin-bottom: 4px; } .former { color: #6b7280; font-size: 11.5px; margin-bottom: 14px; }
     .lede { background: #eff6ff; border-left: 4px solid #1e3a8a; padding: 10px 14px; font-size: 14px; margin: 14px 0 20px; }
+    .media { display: flex; gap: 14px; margin: 14px 0 20px; } .shot { flex: 1; } .shot img { width: 100%; height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; display: block; } .shot .cap { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; margin-top: 4px; }
     h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #1e3a8a; margin: 20px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
     .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 16px; } .fact .k { color: #6b7280; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; } .fact .v { font-weight: 700; font-size: 14px; }
     table { width: 100%; border-collapse: collapse; } th { text-align: left; color: #6b7280; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; padding: 4px 8px 4px 0; border-bottom: 1px solid #e5e7eb; }
@@ -787,6 +793,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport): string {
     <div class="sub">${esc(where)}${r.parcel ? ` · Parcel ${esc(r.parcel)}` : ''}</div>
     ${r.formerNames.length ? `<div class="former">Formerly known as ${esc(r.formerNames.join(', '))}</div>` : ''}
     <div class="lede">${lede}</div>
+    ${mediaHtml}
     ${facts ? `<h2>About the property</h2><div class="facts">${facts}</div>` : ''}
     <h2>Ownership</h2>
     <p><b>Current owner:</b> ${esc(r.owner || '—')}</p>
@@ -807,13 +814,17 @@ app.get('/api/dropbox/report.pdf', rateLimit(60, 'Report limit reached ({n} an h
   try {
     const r = await dropboxAsk.propertyReport(type, id);
     if (!r) return res.status(404).json({ error: 'not found' });
+    const dbInfo = DATABASES.find((d) => d.type === type);
+    const photo = getApprovedPhoto(db, r.address, r.city, r.zip);
+    const map = await fetchStaticMap(r.address, r.city, r.zip).catch(() => null);
+    if (!photo) queuePhotoIfMissing(db, { name: r.name, address: r.address, city: r.city, zip: r.zip, databaseType: dbInfo?.id ?? type });
     const browser = await launchBrowser();
     try {
       const page = await browser.newPage();
-      await page.setContent(propertyReportHtml(r), { waitUntil: 'load' });
+      await page.setContent(propertyReportHtml(r, { photo, map }), { waitUntil: 'load' });
       const pdf = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } });
       const slug = (r.name || r.id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
-      recordUsage(req, { kind: 'pdf', detail: r.name || r.id, databaseType: DATABASES.find((d) => d.type === type)?.id });
+      recordUsage(req, { kind: 'pdf', detail: r.name || r.id, databaseType: dbInfo?.id });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="databank-${slug || 'property'}.pdf"`);
       res.send(Buffer.from(pdf));

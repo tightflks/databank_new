@@ -32,6 +32,7 @@ type PhotoRow = {
 };
 
 const SIZE = '640x400';
+const MAP_SIZE = '640x400';
 
 export function photosConfigured(): boolean {
   return Boolean(process.env.GOOGLE_MAPS_API_KEY);
@@ -63,6 +64,54 @@ export async function fetchStreetView(address: string, city: string, zip: string
   const img = await fetch(`https://maps.googleapis.com/maps/api/streetview?size=${SIZE}&location=${loc}&source=outdoor&fov=80&key=${key}`);
   if (!img.ok) throw new Error(`Street View image: HTTP ${img.status}`);
   return { image: Buffer.from(await img.arrayBuffer()), date: meta.date ?? null };
+}
+
+// A small pinned map of the property, for the customer-facing PDF report. No approval workflow
+// needed here (unlike Street View) — it's just a map, nothing that could show the wrong scene.
+// Cached in memory per address for the life of the process; a property's location never changes.
+const mapCache = new Map<string, Buffer | null>();
+export async function fetchStaticMap(address: string, city: string, zip: string): Promise<Buffer | null> {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) return null;
+  const cacheKey = photoKey(address, city, zip);
+  if (mapCache.has(cacheKey)) return mapCache.get(cacheKey) ?? null;
+  const loc = encodeURIComponent(location(address, city, zip));
+  const url = `https://maps.googleapis.com/maps/api/staticmap?center=${loc}&zoom=15&size=${MAP_SIZE}&scale=2&markers=color:0x1e3a8a%7C${loc}&key=${key}`;
+  const img = await fetch(url);
+  // The Static Maps API returns a 200 with a small PNG error graphic (not JSON) for bad
+  // requests/billing issues; a real map tile image is always well over a few KB.
+  const buf = img.ok ? Buffer.from(await img.arrayBuffer()) : null;
+  const result = buf && buf.length > 2000 ? buf : null;
+  mapCache.set(cacheKey, result);
+  return result;
+}
+
+// The customer-facing PDF report: only ever the currently-approved shot for this address,
+// same rule as the public /api/photos/status endpoint. Returns null if there's no photo yet,
+// or the one on file hasn't been approved.
+const reportPhotoStmt = (db: Db) => db.prepare('SELECT image, status FROM property_photos WHERE key = ?');
+export function getApprovedPhoto(db: Db, address: string, city: string, zip: string): Buffer | null {
+  const row = reportPhotoStmt(db).get(photoKey(address, city, zip)) as { image: Buffer | null; status: PhotoStatus } | undefined;
+  return row?.image && row.status === 'approved' ? row.image : null;
+}
+
+// Fire-and-forget: if this address has never had a Street View shot attempted, fetch and queue
+// it as 'pending' for admin review, so photos gradually fill in as customers view reports —
+// without ever showing an unapproved photo to a customer in the meantime. Never throws.
+const queuedCheckStmt = (db: Db) => db.prepare('SELECT 1 FROM property_photos WHERE key = ?');
+const queuedInsertStmt = (db: Db) =>
+  db.prepare(
+    'INSERT INTO property_photos (key, name, address, city, zip, database_type, status, image, pano_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING'
+  );
+export function queuePhotoIfMissing(db: Db, p: { name: string; address: string; city: string; zip: string; databaseType: string }): void {
+  if (!photosConfigured() || !p.address) return;
+  const key = photoKey(p.address, p.city, p.zip);
+  if (queuedCheckStmt(db).get(key)) return;
+  fetchStreetView(p.address, p.city, p.zip)
+    .then((shot) => {
+      queuedInsertStmt(db).run(key, p.name, p.address, p.city, p.zip, p.databaseType, shot ? 'pending' : 'rejected', shot?.image ?? null, shot?.date ?? null);
+    })
+    .catch((e) => console.error('queuePhotoIfMissing failed:', e instanceof Error ? e.message : e));
 }
 
 export function registerPhotoRoutes(app: Express, db: Db) {

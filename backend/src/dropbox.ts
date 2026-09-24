@@ -242,8 +242,10 @@ const histCache = new Map<string, Loaded>();
 const SALE_FIELDS = new Set(['SALE DATE', 'SALE PRICE', 'TAX OWNER', 'OWNER']);
 
 // Punctuation-free lowercase, so "Cassville-White Rd" and "cassville white" meet.
+// Apostrophes are dropped rather than turned into a space, so "Zaxby's" and "Zaxbys" both
+// normalize to "zaxbys" and match each other.
 function norm(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.toLowerCase().replace(/'/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function summarize(p: Stored): Summary {
@@ -309,6 +311,8 @@ export type AskParams = {
   after?: string;   // ISO week bounds, inclusive
   before?: string;
   area?: string;    // city / county / zip / market-area text, narrows any question
+  search_text?: string; // free text (e.g. a company/brand name) — some callers send this
+                         // instead of `area` for history questions; we treat it the same.
   limit?: number;
 };
 
@@ -424,7 +428,10 @@ export async function ask(params: AskParams): Promise<Record<string, unknown>> {
   const { hist, words } = await loadHistory(type);
   const props = hist.properties;
 
-  const areaTerms = norm(params.area ?? '').split(' ').filter(Boolean);
+  // Some callers (including the LLM query-parser) send free text as `search_text` — the
+  // field documented for mode "current" — even on history questions where only `area` is
+  // read below. Fold both in so a company/brand name narrows the results either way.
+  const areaTerms = norm(`${params.area ?? ''} ${params.search_text ?? ''}`).split(' ').filter(Boolean);
   const inArea = (i: number) => areaTerms.every((t) => words[i].includes(t));
   let oldestSale: string | null = null;
   for (const p of props) for (const s of salesOf(p)) if (s.date && (!oldestSale || s.date < oldestSale)) oldestSale = s.date;

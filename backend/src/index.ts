@@ -2559,8 +2559,8 @@ There are TWO kinds of questions. Decide first, and set "mode":
 - entity: the company / person — for entity_history
 - field: column name — for changes
 - after / before: ISO dates (YYYY-MM-DD) bounding the period, when the user gives one ("since 2024" -> after 2024-01-01; "in 2023" -> both; "prior to 1970" -> before 1969-12-31). Use ONLY these two keys for dates in history mode.
-- area: a city, county, zip, or neighbourhood word to narrow to, if any
-Do NOT set the mode-current filters for a history question.
+- area: a city, county, zip, neighbourhood word — OR any other free text to narrow to, such as a company/brand/property name (e.g. "Zaxby's sold more than once" -> area: "Zaxby's"). There is no separate search_text field in history mode; area is the general-purpose text filter here.
+Do NOT set the mode-current filters (including search_text) for a history question.
 
 For mode "current", the database contains ${databaseType} properties with these filterable fields:
 

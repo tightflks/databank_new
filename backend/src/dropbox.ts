@@ -241,6 +241,13 @@ const histCache = new Map<string, Loaded>();
 
 const SALE_FIELDS = new Set(['SALE DATE', 'SALE PRICE', 'TAX OWNER', 'OWNER']);
 
+// Excel PROPER()-equivalent, for display only (never applied to the raw data used for
+// matching/search). Matches Excel's real behavior, including capitalizing the letter right
+// after an apostrophe (e.g. "MCDONALD'S" -> "Mcdonald'S"), rather than a "smarter" version.
+function properCase(s: string): string {
+  return s.toLowerCase().replace(/\p{L}+/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+}
+
 // Punctuation-free lowercase, so "Cassville-White Rd" and "cassville white" meet.
 // Apostrophes are dropped rather than turned into a space, so "Zaxby's" and "Zaxbys" both
 // normalize to "zaxbys" and match each other. Covers the straight apostrophe (') plus the
@@ -407,14 +414,15 @@ export async function propertyReport(type: string, id: string): Promise<Property
     label,
     value: YEAR_ONLY.has(f) ? c[f].slice(0, 4) : c[f],
   }));
+  const properTrail = (t: Trail): Trail => t.map((x) => ({ ...x, value: properCase(x.value) }));
   return {
-    id: p.id, type, name: p.name, formerNames: Array.from(new Set(names)), address: p.address, city: p.city, county: p.county, zip: c['P ZIP'] ?? '', parcel: p.parcel,
+    id: p.id, type, name: properCase(p.name), formerNames: Array.from(new Set(names)).map(properCase), address: properCase(p.address), city: properCase(p.city), county: properCase(p.county), zip: c['P ZIP'] ?? '', parcel: p.parcel,
     removed: p.removed, first: p.first, last: p.last, weeks: hist.weeks.length,
     facts,
-    owner: c[OWNER_FIELD] ?? c['OWNER'] ?? '',
-    ownerTrail: trailOf(p, OWNER_FIELD).length ? trailOf(p, OWNER_FIELD) : trailOf(p, 'OWNER'),
-    saleList: salesOf(p),
-    loan: c['$ LOAN'] ?? '', lender: c['LENDER'] ?? '', broker: c['BROKER'] ?? '', comments: c['COMMENTS'] ?? '',
+    owner: properCase(c[OWNER_FIELD] ?? c['OWNER'] ?? ''),
+    ownerTrail: properTrail(trailOf(p, OWNER_FIELD).length ? trailOf(p, OWNER_FIELD) : trailOf(p, 'OWNER')),
+    saleList: salesOf(p).map((s) => ({ ...s, seller: properCase(s.seller), buyer: properCase(s.buyer) })),
+    loan: c['$ LOAN'] ?? '', lender: properCase(c['LENDER'] ?? ''), broker: properCase(c['BROKER'] ?? ''), comments: c['COMMENTS'] ?? '',
   };
 }
 

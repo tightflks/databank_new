@@ -313,6 +313,16 @@ const FIELD_MAPPING = {
 };
 
 // Helper function to truncate text to fit within a width
+// Excel PROPER()-equivalent: capitalize the first letter after every non-letter boundary,
+// lowercase the rest. Matches Excel's actual behavior (including its well-known quirk of also
+// capitalizing the letter right after an apostrophe, e.g. "MCDONALD'S" -> "Mcdonald'S") rather
+// than a "smarter" version, since that's explicitly what was asked for. Only meant for
+// person/company/place names pulled straight from the source data — never call this on the
+// free-text Comments field, which keeps its own raw formatting.
+function properCase(s: string): string {
+  return s.toLowerCase().replace(/\p{L}+/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+}
+
 function truncateText(text: string, maxWidth: number, font: any, fontSize: number): string {
   if (!text) return '';
   
@@ -358,13 +368,6 @@ function reportBrand(): string {
 const BRAND_CSS = '.brand .logo { height: 34px; display: block; }';
 
 function generatePropertyReportHTML(properties: any[], fieldMapping: any): string {
-  const formatCurrency = (value: string) => {
-    if (!value) return '-';
-    const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-    if (isNaN(num)) return '-';
-    return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
-
   const propertiesHTML = properties.map((prop, index) => `
     <div class="property-page">
       <div class="property-header">
@@ -1081,7 +1084,7 @@ app.post('/api/search', upload.single('file'), async (req: Request, res: Respons
         }
       }
       
-      return String(value).trim();
+      return colName === 'M1' ? String(value).trim() : properCase(String(value).trim());
     };
 
     // Extract all properties with relevant fields
@@ -1275,23 +1278,23 @@ app.post('/api/convert-html', requireAdmin, upload.single('file'), async (req: R
         }
       }
       
-      return String(value).trim();
+      return colName === 'M1' ? String(value).trim() : properCase(String(value).trim());
     };
 
     const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
       if (!value) return '';
       
+      const formatCurrencyValue = (v: string) => {
+        const n = parseFloat(v.replace(/[^0-9.-]/g, ''));
+        return isNaN(n) ? v : `$${Math.round(n).toLocaleString('en-US')}`;
+      };
       if (concat && row) {
         const concatValue = getCellValue(row, concat);
-        if (format === 'units') return `${value} / ${concatValue}`;
-        if (format === 'acres') return `${value} / ${concatValue}`;
+        if (format === 'units' || format === 'acres') return concatValue ? `${value} / ${formatCurrencyValue(concatValue)}` : value;
         return `${value} ${concatValue}`.trim();
       }
       
-      if (format === 'currency' && value) {
-        const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-        if (!isNaN(num)) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      }
+      if (format === 'currency' && value) return formatCurrencyValue(value);
       
       return value;
     };
@@ -1500,23 +1503,23 @@ app.post('/api/preview-html', requireAdmin, upload.single('file'), async (req: R
         }
       }
       
-      return String(value).trim();
+      return colName === 'M1' ? String(value).trim() : properCase(String(value).trim());
     };
 
     const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
       if (!value) return '';
       
+      const formatCurrencyValue = (v: string) => {
+        const n = parseFloat(v.replace(/[^0-9.-]/g, ''));
+        return isNaN(n) ? v : `$${Math.round(n).toLocaleString('en-US')}`;
+      };
       if (concat && row) {
         const concatValue = getCellValue(row, concat);
-        if (format === 'units') return `${value} / ${concatValue}`;
-        if (format === 'acres') return `${value} / ${concatValue}`;
+        if (format === 'units' || format === 'acres') return concatValue ? `${value} / ${formatCurrencyValue(concatValue)}` : value;
         return `${value} ${concatValue}`.trim();
       }
       
-      if (format === 'currency' && value) {
-        const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-        if (!isNaN(num)) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      }
+      if (format === 'currency' && value) return formatCurrencyValue(value);
       
       return value;
     };
@@ -1689,24 +1692,24 @@ app.post('/api/convert', requireAdmin, upload.single('file'), async (req: Reques
         }
       }
       
-      return String(value).trim();
+      return colName === 'M1' ? String(value).trim() : properCase(String(value).trim());
     };
     
     // Format value based on type
     const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
       if (!value) return '';
       
+      const formatCurrencyValue = (v: string) => {
+        const n = parseFloat(v.replace(/[^0-9.-]/g, ''));
+        return isNaN(n) ? v : `$${Math.round(n).toLocaleString('en-US')}`;
+      };
       if (concat && row) {
         const concatValue = getCellValue(row, concat);
-        if (format === 'units') return `${value} / ${concatValue}`;
-        if (format === 'acres') return `${value} / ${concatValue}`;
+        if (format === 'units' || format === 'acres') return concatValue ? `${value} / ${formatCurrencyValue(concatValue)}` : value;
         return `${value} ${concatValue}`.trim();
       }
       
-      if (format === 'currency' && value) {
-        const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-        if (!isNaN(num)) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      }
+      if (format === 'currency' && value) return formatCurrencyValue(value);
       
       return value;
     };
@@ -2369,13 +2372,18 @@ function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string, d
         return `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
       }
     }
-    return String(value).trim();
+    return colName === 'M1' ? String(value).trim() : properCase(String(value).trim());
   };
 
+  // One rule everywhere: whole dollars, comma-grouped, "$" prefix — matching the per-property
+  // report's money(). Previously this file had three different currency formatters (this one
+  // allowed up to 2 decimals; the inline branch below always forced 2 decimals; a third, dead
+  // one lived in generatePropertyReportHTML) so the same kind of figure could show with or
+  // without cents depending which field it was, and only some fields got a "$" at all.
   const formatCurrencyValue = (value: string) => {
     const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
     if (isNaN(num)) return value;
-    return `$${num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+    return `$${Math.round(num).toLocaleString('en-US')}`;
   };
 
   const formatValue = (value: string, format?: string, row?: any[], concat?: string) => {
@@ -2387,10 +2395,7 @@ function buildReportHTMLFromExcelData(excelData: any[][], filterDate?: string, d
       }
       return `${value} ${concatValue}`.trim();
     }
-    if (format === 'currency' && value) {
-      const num = parseFloat(value.replace(/[^0-9.-]/g, ''));
-      if (!isNaN(num)) return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    }
+    if (format === 'currency' && value) return formatCurrencyValue(value);
     return value;
   };
 

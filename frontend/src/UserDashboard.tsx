@@ -743,15 +743,20 @@ function UserDashboard() {
     const type = ARCHIVE_TYPE[archiveDbOf(p)];
     if (!type) return null;
     const queries = [String(p.parcel || '').trim(), primaryName(p.propertyName), String(p.address || '').trim()].filter(Boolean);
+    // Keep the best ambiguous match as a fallback, but only fall back to it after trying every
+    // query. A name search for a chain (e.g. "McDonald's") can match dozens of records — this
+    // used to give up on that first ambiguous result and return the same one for every location
+    // in the chain, without ever trying the address (tried last, and far more specific) first.
+    let fallback: { type: string; id: string } | null = null;
     for (const q of queries) {
       const res = await axios.get<{ total: number; items: { id: string; name: string }[] }>(`${API_URL}/api/dropbox/properties`, { params: { type, q, page: 0 } });
       const items = res.data.items || [];
       if (items.length === 1) return { type, id: items[0].id };
       const exact = items.find((i) => i.name.toUpperCase() === String(p.propertyName || '').toUpperCase());
       if (exact) return { type, id: exact.id };
-      if (items.length > 1 && q === queries[0]) return { type, id: items[0].id };
+      if (items.length > 1) fallback = { type, id: items[0].id };
     }
-    return null;
+    return fallback;
   };
 
   const openReportFor = async (p: Property, mode: 'report' | 'pdf') => {

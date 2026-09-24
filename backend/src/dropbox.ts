@@ -2,6 +2,7 @@ import { gunzipSync } from 'zlib';
 import nodePath from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { Express, Request, Response } from 'express';
+import { requireUser } from './users';
 
 // Property Search over the Dropbox archive. The weekly Reflex zips in
 // _archive/_datafile are converted to CSV by the sync job in the tareq-dashboard
@@ -566,7 +567,7 @@ function fail(res: Response, e: unknown) {
 
 export function registerDropboxRoutes(app: Express) {
   // What the sync has written: weeks, per-database latest file, every week's file list.
-  app.get('/api/dropbox/summary', async (_req: Request, res: Response) => {
+  app.get('/api/dropbox/summary', requireUser, async (_req: Request, res: Response) => {
     try {
       res.json(await summary());
     } catch (e) {
@@ -575,7 +576,7 @@ export function registerDropboxRoutes(app: Express) {
   });
 
   // Raw rows of one CSV (one file, one week): ?type=APTS&week=2026-08-27&q=…&page=0
-  app.get('/api/dropbox/rows', async (req: Request, res: Response) => {
+  app.get('/api/dropbox/rows', requireUser, async (req: Request, res: Response) => {
     const type = str(req.query.type);
     const week = str(req.query.week);
     const q = str(req.query.q).trim().toLowerCase();
@@ -593,7 +594,7 @@ export function registerDropboxRoutes(app: Express) {
   });
 
   // History questions (see ASK_QUESTIONS): ?type=APTS&question=property_history&subject=…
-  app.get('/api/dropbox/ask', async (req: Request, res: Response) => {
+  app.get('/api/dropbox/ask', requireUser, async (req: Request, res: Response) => {
     const type = str(req.query.type);
     const question = str(req.query.question) as AskQuestion;
     if (!TYPE.test(type)) return res.status(400).json({ error: 'type is required' });
@@ -611,7 +612,7 @@ export function registerDropboxRoutes(app: Express) {
   });
 
   // Customer-readable report for one property: ?type=APTS&id=APTS-01234
-  app.get('/api/dropbox/report', async (req: Request, res: Response) => {
+  app.get('/api/dropbox/report', requireUser, async (req: Request, res: Response) => {
     const type = str(req.query.type);
     const id = str(req.query.id);
     if (!TYPE.test(type) || !ID.test(id)) return res.status(400).json({ error: 'type and id are required' });
@@ -627,7 +628,7 @@ export function registerDropboxRoutes(app: Express) {
   // One record per property across every week:
   //   ?type=APTS&q=briarhill&page=0[&removed=1]  -> search + paging
   //   ?type=APTS&id=APTS-01234                    -> current record + every change
-  app.get('/api/dropbox/properties', async (req: Request, res: Response) => {
+  app.get('/api/dropbox/properties', requireUser, async (req: Request, res: Response) => {
     const type = str(req.query.type);
     const id = req.query.id === undefined ? null : str(req.query.id);
     const q = str(req.query.q).trim().toLowerCase();

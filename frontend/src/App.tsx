@@ -9,7 +9,7 @@ import UsageList from './UsageList';
 import { trackUsage } from './utils/usage';
 import UserDashboard from './UserDashboard';
 import Home from './Home';
-import LoginModal from './LoginModal';
+import LoginModal, { type AccountInfo } from './LoginModal';
 import DatabaseStatus from './DatabaseStatus';
 import PropertyHistory from './PropertyHistory';
 import AdminLogin from './AdminLogin';
@@ -70,6 +70,50 @@ function App() {
     window.location.hash === '#search' ? 'search' : window.location.hash.startsWith('#help') ? 'help' : 'home',
   );
   const [loginOpen, setLoginOpen] = useState(false);
+  const [account, setAccount] = useState<AccountInfo | null | undefined>(undefined); // undefined = still loading
+  const [trialEndedFor, setTrialEndedFor] = useState<string | null>(null);
+
+  useEffect(() => {
+    axios.get(`${API_URL}/api/account/me`)
+      .then(r => setAccount(r.data?.loggedIn ? {
+        email: r.data.email, trialEndsAt: r.data.trialEndsAt, paidUntil: r.data.paidUntil ?? null,
+        hasAccess: r.data.hasAccess, daysLeft: r.data.daysLeft,
+      } : null))
+      .catch(() => setAccount(null));
+  }, []);
+
+  // Opening #search without an active account (fresh visit, or a session whose trial just
+  // ended) should prompt sign-in immediately rather than showing an empty/broken dashboard.
+  useEffect(() => {
+    if (publicView !== 'search' || account === undefined) return;
+    if (!account) { setLoginOpen(true); return; }
+    if (!account.hasAccess) { setTrialEndedFor(account.email); setLoginOpen(true); }
+  }, [publicView, account]);
+
+  const accountLogout = async () => {
+    await axios.post(`${API_URL}/api/account/logout`).catch(() => undefined);
+    setAccount(null);
+  };
+
+  // If a session expires mid-use (trial ran out while browsing, cookie expired), any gated API
+  // call comes back 401/402 — catch that globally and re-prompt sign-in instead of leaving the
+  // dashboard silently broken.
+  useEffect(() => {
+    const id = axios.interceptors.response.use(
+      (r) => r,
+      (err) => {
+        const status = err?.response?.status;
+        if ((status === 401 || status === 402) && !ADMIN_ROUTE && err?.config?.url?.includes('/api/') && !err.config.url.includes('/api/account/')) {
+          setAccount((prev) => (prev ? { ...prev, hasAccess: false } : null));
+          setTrialEndedFor(account?.email ?? null);
+          setLoginOpen(true);
+        }
+        return Promise.reject(err);
+      },
+    );
+    return () => axios.interceptors.response.eject(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.email]);
 
   useEffect(() => {
     if (!ADMIN_ROUTE && publicView !== 'search') trackUsage('page_view', { detail: publicView });
@@ -335,6 +379,17 @@ function App() {
                       </button>
                     </>
                   )}
+                  {!ADMIN_ROUTE && account && (
+                    <>
+                      <div className="my-1 border-t border-gray-100" />
+                      <div className="px-4 py-2 text-xs text-gray-400 truncate">
+                        {account.email} · {account.paidUntil ? 'Active' : account.hasAccess ? `${account.daysLeft} day${account.daysLeft === 1 ? '' : 's'} left in trial` : 'Trial ended'}
+                      </div>
+                      <button onClick={() => { setMenuOpen(false); accountLogout(); }} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-gray-700 hover:bg-gray-50">
+                        <LogOut className="w-4 h-4" /> Sign out
+                      </button>
+                    </>
+                  )}
                   <div className="my-1 border-t border-gray-100" />
                   <a href="https://www.databankinfo.com" target="_blank" rel="noreferrer" className="block px-4 py-2.5 text-gray-500 hover:bg-gray-50">databankinfo.com ↗</a>
                 </div>
@@ -343,7 +398,13 @@ function App() {
           </div>
         </div>
       </header>
-      {loginOpen && <LoginModal onClose={() => setLoginOpen(false)} onGuest={() => { setLoginOpen(false); showPublic('search'); }} />}
+      {loginOpen && (
+        <LoginModal
+          trialEndedFor={trialEndedFor}
+          onClose={() => { setLoginOpen(false); setTrialEndedFor(null); if (!account?.hasAccess) showPublic('home'); }}
+          onAuthed={(acct) => { setAccount(acct); setTrialEndedFor(null); setLoginOpen(false); showPublic('search'); }}
+        />
+      )}
 
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 flex-1">
         {ADMIN_ROUTE && (
@@ -449,7 +510,7 @@ function App() {
                 ))}
               </div>
             </div>
-            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : publicView === 'help' ? <Help onExit={() => showPublic('search')} /> : <UserDashboard />}
+            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : publicView === 'help' ? <Help onExit={() => showPublic('search')} /> : account?.hasAccess ? <UserDashboard /> : null}
           </>
         ) : !isAdmin ? (
           isAdmin === null ? null : <AdminLogin onLogin={() => setIsAdmin(true)} />

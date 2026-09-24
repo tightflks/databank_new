@@ -12,6 +12,7 @@ import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 import { registerPhotoRoutes, photosConfigured, getApprovedPhoto, fetchStaticMap, queuePhotoIfMissing } from './photos';
+import { registerUserRoutes, requireUser } from './users';
 import { registerStatsRoutes } from './stats';
 import { registerUsageRoutes, recordUsage } from './usage';
 const Database = require('better-sqlite3');
@@ -342,7 +343,13 @@ function truncateText(text: string, maxWidth: number, font: any, fontSize: numbe
 }
 
 // HTML Template Generator for Property Reports
-// Railway's Nix Chromium ships without system fonts, so the report embeds its own.
+// Railway's Nix Chromium ships without system fonts, so the report embeds its own — and this
+// also matters in a normal browser (e.g. Blake viewing /api/reports/:id/view directly): CSS
+// asked for font-weight: 600 on some elements (.field-value) but only 400 and 700 were ever
+// registered, so a viewer had to guess/synthesize the missing weight, which can render
+// inconsistently depending on browser and OS. Registering the same two files again at 500 and
+// 600 makes every weight actually used in these templates (400, 600, 700) resolve to an exact,
+// explicit face — no synthesis, no guessing, no per-browser variation.
 let fontCssCache: string | null = null;
 function embeddedFontCss(): string {
   if (fontCssCache !== null) return fontCssCache;
@@ -353,7 +360,9 @@ function embeddedFontCss(): string {
     const b64 = fs.readFileSync(p).toString('base64');
     return `@font-face { font-family: 'Inter'; font-weight: ${weight}; src: url(data:font/ttf;base64,${b64}) format('truetype'); }`;
   };
-  fontCssCache = face('LiberationSans-Regular.ttf', 400) + face('LiberationSans-Bold.ttf', 700);
+  const regular = face('LiberationSans-Regular.ttf', 400) + face('LiberationSans-Regular.ttf', 500);
+  const bold = face('LiberationSans-Bold.ttf', 600) + face('LiberationSans-Bold.ttf', 700);
+  fontCssCache = regular + bold;
   return fontCssCache;
 }
 
@@ -463,7 +472,7 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
 
         .main-title {
           font-size: 42pt;
-          font-weight: 800;
+          font-weight: 700;
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
@@ -479,7 +488,7 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
           font-size: 18pt;
           color: white;
           margin-bottom: 50px;
-          font-weight: 300;
+          font-weight: 400;
           position: relative;
           z-index: 1;
         }
@@ -497,7 +506,7 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
           font-size: 14pt;
           color: #64748b;
           margin-bottom: 30px;
-          font-weight: 500;
+          font-weight: 600;
           position: relative;
           z-index: 1;
           padding: 8px 16px;
@@ -665,7 +674,7 @@ registerAuthRoutes(app);
 
 // Current search results -> .xlsx. The browser already holds the filtered rows, so it sends them
 // as { columns: [{key,label}], rows: [{key: value}] } and gets a workbook back.
-app.post('/api/export/xlsx', rateLimit(60, 'Export limit reached ({n} an hour)'), (req: Request, res: Response) => {
+app.post('/api/export/xlsx', requireUser, rateLimit(60, 'Export limit reached ({n} an hour)'), (req: Request, res: Response) => {
   const { columns, rows, filename } = req.body as {
     columns?: { key: string; label: string }[];
     rows?: Record<string, string | number | null>[];
@@ -810,7 +819,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport, media: { photo: Buffer
   </body></html>`;
 }
 
-app.get('/api/dropbox/report.pdf', rateLimit(60, 'Report limit reached ({n} an hour)'), async (req: Request, res: Response) => {
+app.get('/api/dropbox/report.pdf', requireUser, rateLimit(60, 'Report limit reached ({n} an hour)'), async (req: Request, res: Response) => {
   const type = typeof req.query.type === 'string' ? req.query.type : '';
   const id = typeof req.query.id === 'string' ? req.query.id : '';
   if (!/^[A-Z0-9]{1,12}$/.test(type) || !/^[A-Z0-9-]{1,32}$/.test(id)) return res.status(400).json({ error: 'type and id are required' });
@@ -884,7 +893,7 @@ function snapshotHtml(s: Snapshot): string {
   </body></html>`;
 }
 
-app.post('/api/market-snapshot.pdf', rateLimit(60, 'Report limit reached ({n} an hour)'), async (req: Request, res: Response) => {
+app.post('/api/market-snapshot.pdf', requireUser, rateLimit(60, 'Report limit reached ({n} an hour)'), async (req: Request, res: Response) => {
   const s = parseSnapshot(req.body);
   if (!s || !s.database) return res.status(400).json({ error: 'snapshot is required' });
   try {
@@ -1948,7 +1957,7 @@ app.post('/api/convert', requireAdmin, upload.single('file'), async (req: Reques
 // ==================== DATABASE ENDPOINTS ====================
 
 // Get all uploads
-app.get('/api/uploads', (req: Request, res: Response) => {
+app.get('/api/uploads', requireUser, (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
@@ -1970,7 +1979,7 @@ app.get('/api/uploads', (req: Request, res: Response) => {
 });
 
 // Get specific upload by ID
-app.get('/api/uploads/:id', (req: Request, res: Response) => {
+app.get('/api/uploads/:id', requireUser, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -1990,7 +1999,7 @@ app.get('/api/uploads/:id', (req: Request, res: Response) => {
 });
 
 // Get Excel data for a specific upload
-app.get('/api/uploads/:id/data', (req: Request, res: Response) => {
+app.get('/api/uploads/:id/data', requireUser, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2038,7 +2047,7 @@ app.delete('/api/uploads/:id', requireAdmin, (req: Request, res: Response) => {
 // ==================== SAVED REPORTS ENDPOINTS ====================
 
 // Get database status: which file/version is attached to each database
-app.get('/api/databases', (req: Request, res: Response) => {
+app.get('/api/databases', requireUser, (req: Request, res: Response) => {
   try {
     const latestUploadStmt = db.prepare(`
       SELECT * FROM uploads WHERE database_type = ? ORDER BY upload_date DESC LIMIT 1
@@ -2166,7 +2175,7 @@ app.post('/api/databases/:type/upload', requireAdmin, upload.single('file'), (re
 });
 
 // Extract insider dates from a stored upload
-app.get('/api/uploads/:id/dates', (req: Request, res: Response) => {
+app.get('/api/uploads/:id/dates', requireUser, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2506,7 +2515,7 @@ async function summarizeHistoryAnswer(apiKey: string, question: string, answer: 
   }
 }
 
-app.post('/api/nl-search', rateLimit(ASK_AI_PER_HOUR), async (req: Request, res: Response) => {
+app.post('/api/nl-search', requireUser, rateLimit(ASK_AI_PER_HOUR), async (req: Request, res: Response) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -2686,7 +2695,7 @@ Respond with ONLY a JSON object: "mode", the applicable fields (omit ones that d
 });
 
 // Preview HTML report from a stored upload (no re-upload required)
-app.get('/api/uploads/:id/preview', (req: Request, res: Response) => {
+app.get('/api/uploads/:id/preview', requireUser, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2765,7 +2774,7 @@ app.post('/api/uploads/:id/generate-pdf', requireAdmin, async (req: Request, res
 });
 
 // Get all saved reports
-app.get('/api/reports', (req: Request, res: Response) => {
+app.get('/api/reports', requireUser, (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
@@ -2819,7 +2828,7 @@ app.get('/api/reports', (req: Request, res: Response) => {
 });
 
 // Get specific report by ID
-app.get('/api/reports/:id', (req: Request, res: Response) => {
+app.get('/api/reports/:id', requireUser, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2860,7 +2869,7 @@ app.delete('/api/reports/:id', requireAdmin, (req: Request, res: Response) => {
 });
 
 // View saved report as HTML
-app.get('/api/reports/:id/view', async (req: Request, res: Response) => {
+app.get('/api/reports/:id/view', requireUser, async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2947,6 +2956,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 // Property Search over the Dropbox archive (weekly CSVs + per-property history)
 registerDropboxRoutes(app);
 registerPhotoRoutes(app, db);
+registerUserRoutes(app, db);
 registerStatsRoutes(app, db);
 registerUsageRoutes(app, db);
 

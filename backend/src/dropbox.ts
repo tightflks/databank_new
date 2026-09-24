@@ -243,9 +243,11 @@ const SALE_FIELDS = new Set(['SALE DATE', 'SALE PRICE', 'TAX OWNER', 'OWNER']);
 
 // Punctuation-free lowercase, so "Cassville-White Rd" and "cassville white" meet.
 // Apostrophes are dropped rather than turned into a space, so "Zaxby's" and "Zaxbys" both
-// normalize to "zaxbys" and match each other.
+// normalize to "zaxbys" and match each other. Covers the straight apostrophe (') plus the
+// smart-quote variants (’ ‘ ´ `) that copy-pasted text commonly carries — those used to fall
+// through to the punctuation-to-space rule below and silently break the match.
 function norm(s: string): string {
-  return s.toLowerCase().replace(/'/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.toLowerCase().replace(/['\u2018\u2019\u00b4`]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function summarize(p: Stored): Summary {

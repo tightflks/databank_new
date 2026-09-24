@@ -2483,6 +2483,7 @@ async function summarizeHistoryAnswer(apiKey: string, question: string, answer: 
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 300,
+        temperature: 0,
         system,
         messages: [{ role: 'user', content: `Question: ${question}\n\nFacts:\n${JSON.stringify(facts)}` }]
       })
@@ -2627,6 +2628,7 @@ Respond with ONLY a JSON object: "mode", the applicable fields (omit ones that d
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 800,
+        temperature: 0,
         system: systemPrompt,
         messages: [{ role: 'user', content: query.trim() }]
       })

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Loader2, Trash2, MessageSquare, ImageIcon } from 'lucide-react';
+import { Loader2, Trash2, MessageSquare, ImageIcon, Plus, X } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 type Status = 'pending' | 'solved';
+type Source = 'website' | 'call' | 'other';
 
 interface Feedback {
   id: number;
@@ -15,6 +16,7 @@ interface Feedback {
   email: string | null;
   status: Status;
   resolution: string | null;
+  source: Source;
   has_screenshot: number;
   created_date: string;
 }
@@ -27,8 +29,60 @@ function StatusBadge({ status }: { status: Status }) {
   );
 }
 
+// Logging a call (or any other non-website source) so it lands in the same list as what comes
+// through the site's own Feedback button — Blake uses both.
+function AddManualEntry({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [contact, setContact] = useState('');
+  const [source, setSource] = useState<'call' | 'other'>('call');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!message.trim() || saving) return;
+    setSaving(true);
+    try {
+      await axios.post(`${API_URL}/api/feedback/manual`, { message: message.trim(), contact: contact.trim() || null, source });
+      setMessage('');
+      setContact('');
+      setOpen(false);
+      onAdded();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:underline">
+        <Plus className="w-4 h-4" /> Log a call or other feedback
+      </button>
+    );
+  }
+  return (
+    <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-700">Log feedback from a call or other source</span>
+        <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
+      </div>
+      <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} placeholder="What did they say?" className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <div className="flex gap-2 items-center flex-wrap">
+        <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Who (name/company, optional)" className="flex-1 min-w-[10rem] text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        <select value={source} onChange={(e) => setSource(e.target.value as 'call' | 'other')} className="text-sm border border-gray-300 rounded-lg px-2 py-2">
+          <option value="call">Phone call</option>
+          <option value="other">Other</option>
+        </select>
+        <button onClick={submit} disabled={!message.trim() || saving} className="bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5">
+          {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function FeedbackList() {
   const [items, setItems] = useState<Feedback[] | null>(null);
+  const [tab, setTab] = useState<'website' | 'other'>('website');
   const [error, setError] = useState<string | null>(null);
   const [openImage, setOpenImage] = useState<number | null>(null);
   const [draft, setDraft] = useState<Record<number, string>>({});
@@ -67,20 +121,32 @@ export default function FeedbackList() {
     }
   };
 
-  const pendingCount = items?.filter((f) => f.status !== 'solved').length ?? 0;
+  const websiteItems = items?.filter((f) => f.source === 'website' || !f.source) ?? [];
+  const otherItems = items?.filter((f) => f.source === 'call' || f.source === 'other') ?? [];
+  const shown = tab === 'website' ? websiteItems : otherItems;
+  const pendingCount = shown.filter((f) => f.status !== 'solved').length;
+
+  const TabButton = ({ id, label, count }: { id: 'website' | 'other'; label: string; count: number }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab === id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+    >
+      {label} <span className={tab === id ? 'text-blue-100' : 'text-gray-400'}>({count})</span>
+    </button>
+  );
 
   return (
     <div className="bg-white rounded-2xl shadow-xl p-8">
       <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold text-gray-800 mb-1">Customer feedback</h2>
-          <p className="text-gray-600 text-sm">Everything sent from the Feedback button on the customer view. Pending items sort to the top.</p>
+          <p className="text-gray-600 text-sm">From the site's Feedback button, plus anything logged from a call or elsewhere.</p>
         </div>
         {items && (
           <div className="flex gap-3">
             <div className="bg-amber-50 text-amber-800 rounded-xl px-4 py-2 text-center">
               <div className="text-xl font-bold">{pendingCount}</div>
-              <div className="text-xs">pending</div>
+              <div className="text-xs">pending here</div>
             </div>
             <div className="bg-gray-50 text-gray-700 rounded-xl px-4 py-2 text-center">
               <div className="text-xl font-bold">{items.length}</div>
@@ -89,13 +155,22 @@ export default function FeedbackList() {
           </div>
         )}
       </div>
+
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
+        <div className="flex gap-2">
+          <TabButton id="website" label="From the website" count={websiteItems.length} />
+          <TabButton id="other" label="Calls & other sources" count={otherItems.length} />
+        </div>
+        <AddManualEntry onAdded={load} />
+      </div>
+
       {error && <p className="text-red-600 text-sm">{error}</p>}
       {items === null ? (
         <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>
-      ) : items.length === 0 ? (
+      ) : shown.length === 0 ? (
         <div className="text-center py-12 text-gray-500">
           <MessageSquare className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-          No feedback yet.
+          {tab === 'website' ? 'No website feedback yet.' : 'Nothing logged from a call or other source yet.'}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -110,7 +185,7 @@ export default function FeedbackList() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {items.map((f) => (
+              {shown.map((f) => (
                 <tr key={f.id} className="align-top">
                   <td className="py-3 pr-3">
                     <select
@@ -137,6 +212,7 @@ export default function FeedbackList() {
                   <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
                     <div>{f.email ? `${f.email} (signed in)` : f.contact || 'anonymous'}</div>
                     <div>{new Date(f.created_date + (f.created_date.endsWith('Z') ? '' : 'Z')).toLocaleString()}</div>
+                    {f.source && f.source !== 'website' && <div className="capitalize text-gray-400">{f.source}</div>}
                     {f.page && <div className="truncate max-w-[10rem]">{f.page}</div>}
                   </td>
                   <td className="py-3 pr-3">

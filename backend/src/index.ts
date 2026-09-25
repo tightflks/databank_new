@@ -717,11 +717,13 @@ app.post('/api/export/xlsx', requireUser, rateLimit(60, 'Export limit reached ({
 for (const col of [
   'email TEXT', 'screenshot BLOB', 'replied INTEGER NOT NULL DEFAULT 0',
   "status TEXT NOT NULL DEFAULT 'pending'", 'resolution TEXT',
+  "source TEXT NOT NULL DEFAULT 'website'",
 ]) {
   try { db.exec(`ALTER TABLE feedback ADD COLUMN ${col}`); } catch { /* already added */ }
 }
-const insertFeedbackStmt: any = db.prepare(`INSERT INTO feedback (message, contact, page, database_type, email, screenshot) VALUES (?, ?, ?, ?, ?, ?)`);
-const listFeedbackStmt: any = db.prepare(`SELECT id, message, contact, page, database_type, email, replied, status, resolution, created_date, screenshot IS NOT NULL as has_screenshot FROM feedback ORDER BY (status = 'pending') DESC, created_date DESC LIMIT 500`);
+const insertFeedbackStmt: any = db.prepare(`INSERT INTO feedback (message, contact, page, database_type, email, screenshot, source) VALUES (?, ?, ?, ?, ?, ?, 'website')`);
+const insertManualFeedbackStmt: any = db.prepare(`INSERT INTO feedback (message, contact, page, database_type, source, status, resolution) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+const listFeedbackStmt: any = db.prepare(`SELECT id, message, contact, page, database_type, email, replied, status, resolution, source, created_date, screenshot IS NOT NULL as has_screenshot FROM feedback ORDER BY (status = 'pending') DESC, created_date DESC LIMIT 500`);
 const deleteFeedbackStmt: any = db.prepare(`DELETE FROM feedback WHERE id = ?`);
 const getFeedbackScreenshotStmt: any = db.prepare(`SELECT screenshot FROM feedback WHERE id = ?`);
 const setFeedbackRepliedStmt: any = db.prepare(`UPDATE feedback SET replied = ? WHERE id = ?`);
@@ -752,6 +754,18 @@ app.post('/api/feedback', rateLimit(20, 'Feedback limit reached ({n} an hour)'),
 
 app.get('/api/feedback', requireAdmin, (_req: Request, res: Response) => {
   res.json(listFeedbackStmt.all());
+});
+
+// Logging a call or other non-website source Blake heard feedback through, so it lands in the
+// same list/changelog as what comes through the site's own Feedback button.
+app.post('/api/feedback/manual', requireAdmin, (req: Request, res: Response) => {
+  const { message, contact, page, source } = req.body as Record<string, unknown>;
+  const text = typeof message === 'string' ? message.trim() : '';
+  if (!text) return res.status(400).json({ error: 'message is required' });
+  const clip = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : null);
+  const src = source === 'call' ? 'call' : 'other';
+  const info = insertManualFeedbackStmt.run(text.slice(0, 4000), clip(contact, 200), clip(page, 200), null, src, 'pending', null);
+  res.json({ ok: true, id: Number(info.lastInsertRowid) });
 });
 
 app.get('/api/feedback/:id/screenshot', requireAdmin, (req: Request, res: Response) => {

@@ -252,6 +252,7 @@ export function registerUserRoutes(app: Express, db: Db) {
   const listUsersStmt = db.prepare('SELECT * FROM users ORDER BY created_date DESC');
   const setPaidStmt = db.prepare('UPDATE users SET paid_until = ? WHERE id = ?');
   const setDisabledStmt = db.prepare('UPDATE users SET disabled = ? WHERE id = ?');
+  const updateUserStmt = db.prepare('UPDATE users SET first_name = ?, last_name = ?, company = ?, email = ? WHERE id = ?');
 
   app.get('/api/account/admin/users', requireAdmin, (_req: Request, res: Response) => {
     const rows = listUsersStmt.all() as UserRow[];
@@ -283,5 +284,22 @@ export function registerUserRoutes(app: Express, db: Db) {
     const disabled = req.body?.disabled ? 1 : 0;
     setDisabledStmt.run(disabled, id);
     res.json({ ok: true, disabled: Boolean(disabled) });
+  });
+
+  app.post('/api/account/admin/users/:id/edit', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const clip = (v: unknown, n: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+    const firstName = clip(req.body?.firstName, 100);
+    const lastName = clip(req.body?.lastName, 100);
+    const company = clip(req.body?.company, 200);
+    const email = normalizeEmail(req.body?.email);
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    try {
+      updateUserStmt.run(firstName, lastName, company, email, id);
+    } catch {
+      return res.status(409).json({ error: 'Another account already uses that email.' });
+    }
+    res.json({ ok: true });
   });
 }

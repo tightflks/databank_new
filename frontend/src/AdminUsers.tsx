@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Loader2, Users, CheckCircle2, XCircle, Ban, RotateCcw } from 'lucide-react';
+import { Loader2, Users, CheckCircle2, XCircle, Ban, RotateCcw, Pencil, Check, X } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
@@ -22,6 +22,29 @@ export default function AdminUsers() {
   const [activeCount, setActiveCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({ firstName: '', lastName: '', company: '', email: '' });
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const startEdit = (u: AccountUser) => {
+    setEditingId(u.id);
+    setEditError(null);
+    setEditForm({ firstName: u.firstName ?? '', lastName: u.lastName ?? '', company: u.company ?? '', email: u.email });
+  };
+
+  const saveEdit = async (u: AccountUser) => {
+    setBusy(u.id);
+    setEditError(null);
+    try {
+      await axios.post(`${API_URL}/api/account/admin/users/${u.id}/edit`, editForm);
+      setEditingId(null);
+      await load();
+    } catch (e: unknown) {
+      setEditError(axios.isAxiosError(e) ? e.response?.data?.error || 'Could not save.' : 'Could not save.');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const load = async () => {
     try {
@@ -109,32 +132,71 @@ export default function AdminUsers() {
             <tbody className="divide-y divide-gray-100">
               {users.map((u) => (
                 <tr key={u.id} className={u.disabled ? 'opacity-50' : ''}>
-                  <td className="py-2 pr-3">
-                    <div className="font-medium text-gray-900">{[u.firstName, u.lastName].filter(Boolean).join(' ') || '—'}</div>
-                    <div className="text-xs text-gray-500">{u.company || ''}</div>
-                  </td>
-                  <td className="py-2 pr-3">{u.email}</td>
-                  <td className="py-2 pr-3 text-gray-500">{new Date(u.createdDate + (u.createdDate.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}</td>
-                  <td className="py-2 pr-3">
-                    {u.disabled ? (
-                      <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
-                    ) : u.hasAccess ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-red-600"><XCircle className="w-3.5 h-3.5" /> Expired</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <div className="flex gap-2">
-                      <button disabled={busy === u.id} onClick={() => markPaid(u)} className="text-xs font-semibold text-blue-600 hover:underline disabled:opacity-50">Mark paid…</button>
-                      {u.paidUntil !== null && (
-                        <button disabled={busy === u.id} onClick={() => revokePaid(u)} title="Back to trial-only access" className="text-xs font-semibold text-gray-500 hover:underline disabled:opacity-50 flex items-center gap-0.5"><RotateCcw className="w-3 h-3" /> Revert</button>
-                      )}
-                      <button disabled={busy === u.id} onClick={() => toggleDisabled(u)} className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50">
-                        {u.disabled ? 'Enable' : 'Disable'}
-                      </button>
-                    </div>
-                  </td>
+                  {editingId === u.id ? (
+                    <>
+                      <td className="py-2 pr-3">
+                        <div className="flex gap-1">
+                          <input value={editForm.firstName} onChange={(e) => setEditForm((f) => ({ ...f, firstName: e.target.value }))} placeholder="First" className="w-20 text-xs border border-gray-300 rounded px-1.5 py-1" />
+                          <input value={editForm.lastName} onChange={(e) => setEditForm((f) => ({ ...f, lastName: e.target.value }))} placeholder="Last" className="w-20 text-xs border border-gray-300 rounded px-1.5 py-1" />
+                        </div>
+                        <input value={editForm.company} onChange={(e) => setEditForm((f) => ({ ...f, company: e.target.value }))} placeholder="Company" className="mt-1 w-full text-xs border border-gray-300 rounded px-1.5 py-1" />
+                      </td>
+                      <td className="py-2 pr-3">
+                        <input value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} placeholder="Email" className="w-full text-xs border border-gray-300 rounded px-1.5 py-1" />
+                        {editError && <p className="text-[10px] text-red-600 mt-1">{editError}</p>}
+                      </td>
+                      <td className="py-2 pr-3 text-gray-500">{new Date(u.createdDate + (u.createdDate.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}</td>
+                      <td className="py-2 pr-3">
+                        {u.disabled ? (
+                          <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
+                        ) : u.hasAccess ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-red-600"><XCircle className="w-3.5 h-3.5" /> Expired</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <div className="flex gap-2">
+                          <button disabled={busy === u.id} onClick={() => saveEdit(u)} className="text-xs font-semibold text-emerald-700 hover:underline disabled:opacity-50 flex items-center gap-0.5">
+                            {busy === u.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+                          </button>
+                          <button disabled={busy === u.id} onClick={() => setEditingId(null)} className="text-xs font-semibold text-gray-500 hover:underline disabled:opacity-50 flex items-center gap-0.5">
+                            <X className="w-3 h-3" /> Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="py-2 pr-3">
+                        <div className="font-medium text-gray-900">{[u.firstName, u.lastName].filter(Boolean).join(' ') || '—'}</div>
+                        <div className="text-xs text-gray-500">{u.company || ''}</div>
+                      </td>
+                      <td className="py-2 pr-3">{u.email}</td>
+                      <td className="py-2 pr-3 text-gray-500">{new Date(u.createdDate + (u.createdDate.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}</td>
+                      <td className="py-2 pr-3">
+                        {u.disabled ? (
+                          <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
+                        ) : u.hasAccess ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-red-600"><XCircle className="w-3.5 h-3.5" /> Expired</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <div className="flex gap-2 flex-wrap">
+                          <button disabled={busy === u.id} onClick={() => startEdit(u)} className="text-xs font-semibold text-gray-600 hover:underline disabled:opacity-50 flex items-center gap-0.5"><Pencil className="w-3 h-3" /> Edit</button>
+                          <button disabled={busy === u.id} onClick={() => markPaid(u)} className="text-xs font-semibold text-blue-600 hover:underline disabled:opacity-50">Mark paid…</button>
+                          {u.paidUntil !== null && (
+                            <button disabled={busy === u.id} onClick={() => revokePaid(u)} title="Back to trial-only access" className="text-xs font-semibold text-gray-500 hover:underline disabled:opacity-50 flex items-center gap-0.5"><RotateCcw className="w-3 h-3" /> Revert</button>
+                          )}
+                          <button disabled={busy === u.id} onClick={() => toggleDisabled(u)} className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50">
+                            {u.disabled ? 'Enable' : 'Disable'}
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>

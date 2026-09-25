@@ -714,14 +714,18 @@ app.post('/api/export/xlsx', requireUser, rateLimit(60, 'Export limit reached ({
 // Added after the table already existed in production — guarded migrations, not part of the
 // CREATE TABLE above, same pattern as users.ts. Must run before the prepare() calls below,
 // since prepare() fails immediately if a referenced column doesn't exist yet.
-for (const col of ['email TEXT', 'screenshot BLOB', 'replied INTEGER NOT NULL DEFAULT 0']) {
+for (const col of [
+  'email TEXT', 'screenshot BLOB', 'replied INTEGER NOT NULL DEFAULT 0',
+  "status TEXT NOT NULL DEFAULT 'pending'", 'resolution TEXT',
+]) {
   try { db.exec(`ALTER TABLE feedback ADD COLUMN ${col}`); } catch { /* already added */ }
 }
 const insertFeedbackStmt: any = db.prepare(`INSERT INTO feedback (message, contact, page, database_type, email, screenshot) VALUES (?, ?, ?, ?, ?, ?)`);
-const listFeedbackStmt: any = db.prepare(`SELECT id, message, contact, page, database_type, email, replied, created_date, screenshot IS NOT NULL as has_screenshot FROM feedback ORDER BY created_date DESC LIMIT 500`);
+const listFeedbackStmt: any = db.prepare(`SELECT id, message, contact, page, database_type, email, replied, status, resolution, created_date, screenshot IS NOT NULL as has_screenshot FROM feedback ORDER BY (status = 'pending') DESC, created_date DESC LIMIT 500`);
 const deleteFeedbackStmt: any = db.prepare(`DELETE FROM feedback WHERE id = ?`);
 const getFeedbackScreenshotStmt: any = db.prepare(`SELECT screenshot FROM feedback WHERE id = ?`);
 const setFeedbackRepliedStmt: any = db.prepare(`UPDATE feedback SET replied = ? WHERE id = ?`);
+const setFeedbackStatusStmt: any = db.prepare(`UPDATE feedback SET status = ?, resolution = ? WHERE id = ?`);
 
 app.post('/api/feedback', rateLimit(20, 'Feedback limit reached ({n} an hour)'), (req: Request, res: Response) => {
   const { message, contact, page, database_type, screenshot } = req.body as Record<string, unknown>;
@@ -761,6 +765,15 @@ app.post('/api/feedback/:id/replied', requireAdmin, (req: Request, res: Response
   const replied = req.body?.replied ? 1 : 0;
   setFeedbackRepliedStmt.run(replied, Number(req.params.id));
   res.json({ ok: true, replied: Boolean(replied) });
+});
+
+// status: 'pending' | 'solved'. resolution: free text — what actually changed in response to
+// this item, so the list doubles as a changelog rather than just a read/unread marker.
+app.post('/api/feedback/:id/status', requireAdmin, (req: Request, res: Response) => {
+  const status = req.body?.status === 'solved' ? 'solved' : 'pending';
+  const resolution = typeof req.body?.resolution === 'string' ? req.body.resolution.trim().slice(0, 4000) : null;
+  setFeedbackStatusStmt.run(status, resolution, Number(req.params.id));
+  res.json({ ok: true, status, resolution });
 });
 
 app.delete('/api/feedback/:id', requireAdmin, (req: Request, res: Response) => {

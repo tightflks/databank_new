@@ -2,6 +2,7 @@ import { Fragment, useState, useEffect } from 'react';
 import axios from 'axios';
 import { ChevronDown, ChevronUp, FileSpreadsheet, History, Loader2, X } from 'lucide-react';
 import { navigateToProperty } from './utils/navigate';
+import { openFeedback } from './utils/feedback';
 import { fmtDate, fmtValue } from './utils/fmt';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
@@ -257,6 +258,14 @@ export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnsw
           <p className="text-base sm:text-lg text-gray-900 leading-relaxed">{answer.summary}</p>
           {answer.total > 0 && (
             <p className="mt-1 text-xs text-gray-500">Written from the {answer.total.toLocaleString('en-US')} matching record{answer.total === 1 ? '' : 's'} below — every date, price and name comes from Databank's weekly files.</p>
+          )}
+          {answer.total === 0 && (
+            <button
+              onClick={() => openFeedback(`Ask AI returned 0 results.\nQuestion: ${asked ?? ''}\nQuestion type: ${answer.question}\n`)}
+              className="mt-2 text-sm font-semibold text-db-navy hover:underline"
+            >
+              Not what you expected? Report an issue →
+            </button>
           )}
         </div>
       )}

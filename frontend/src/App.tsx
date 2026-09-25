@@ -1033,7 +1033,7 @@ function App() {
         </div>
       </footer>
 
-      {!ADMIN_ROUTE && <FeedbackWidget />}
+      {!ADMIN_ROUTE && <FeedbackWidget userEmail={account?.email ?? null} />}
     </div>
   );
 }

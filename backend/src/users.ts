@@ -144,6 +144,18 @@ export function usersConfigured(): boolean {
   return db_ !== null;
 }
 
+// For endpoints that stay open to logged-out visitors but should auto-attach the sender's
+// email when one is available — feedback submissions, for instance ("once users have to log
+// in, this happens automatically" per the written list). Never throws, never blocks.
+export function currentUserEmail(req: Request): string | null {
+  if (!db_) return null;
+  const token = readCookie(req, COOKIE);
+  const s = token ? sessions.get(token) : undefined;
+  if (!s) return null;
+  const row = getUserByIdStmt().get(s.userId) as UserRow | undefined;
+  return row && !row.disabled ? row.email : null;
+}
+
 export function registerUserRoutes(app: Express, db: Db) {
   db_ = db;
   db.exec(`

@@ -12,7 +12,7 @@ import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 import { registerPhotoRoutes, photosConfigured, getApprovedPhoto, fetchStaticMap, queuePhotoIfMissing } from './photos';
-import { registerUserRoutes, requireUser } from './users';
+import { registerUserRoutes, requireUser, currentUserEmail } from './users';
 import { registerNotesAiRoutes } from './notesAi';
 import { registerStatsRoutes } from './stats';
 import { registerUsageRoutes, recordUsage } from './usage';
@@ -711,25 +711,56 @@ app.post('/api/export/xlsx', requireUser, rateLimit(60, 'Export limit reached ({
 });
 
 // Feedback from testers: anyone can post, only admins can read.
-const insertFeedbackStmt: any = db.prepare(`INSERT INTO feedback (message, contact, page, database_type) VALUES (?, ?, ?, ?)`);
-const listFeedbackStmt: any = db.prepare(`SELECT * FROM feedback ORDER BY created_date DESC LIMIT 500`);
+// Added after the table already existed in production — guarded migrations, not part of the
+// CREATE TABLE above, same pattern as users.ts. Must run before the prepare() calls below,
+// since prepare() fails immediately if a referenced column doesn't exist yet.
+for (const col of ['email TEXT', 'screenshot BLOB', 'replied INTEGER NOT NULL DEFAULT 0']) {
+  try { db.exec(`ALTER TABLE feedback ADD COLUMN ${col}`); } catch { /* already added */ }
+}
+const insertFeedbackStmt: any = db.prepare(`INSERT INTO feedback (message, contact, page, database_type, email, screenshot) VALUES (?, ?, ?, ?, ?, ?)`);
+const listFeedbackStmt: any = db.prepare(`SELECT id, message, contact, page, database_type, email, replied, created_date, screenshot IS NOT NULL as has_screenshot FROM feedback ORDER BY created_date DESC LIMIT 500`);
 const deleteFeedbackStmt: any = db.prepare(`DELETE FROM feedback WHERE id = ?`);
+const getFeedbackScreenshotStmt: any = db.prepare(`SELECT screenshot FROM feedback WHERE id = ?`);
+const setFeedbackRepliedStmt: any = db.prepare(`UPDATE feedback SET replied = ? WHERE id = ?`);
 
 app.post('/api/feedback', rateLimit(20, 'Feedback limit reached ({n} an hour)'), (req: Request, res: Response) => {
-  const { message, contact, page, database_type } = req.body as Record<string, unknown>;
+  const { message, contact, page, database_type, screenshot } = req.body as Record<string, unknown>;
   const text = typeof message === 'string' ? message.trim() : '';
   if (!text) return res.status(400).json({ error: 'message is required' });
   if (text.length > 4000) return res.status(400).json({ error: 'message too long (4,000 characters max)' });
   const clip = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : null);
-  const info = insertFeedbackStmt.run(text, clip(contact, 200), clip(page, 200), clip(database_type, 40));
+  // Once someone's logged in, their email is attached automatically — no more asking for
+  // "your name or email (optional)" and hoping they fill it in.
+  const email = currentUserEmail(req);
+  let screenshotBuf: Buffer | null = null;
+  if (typeof screenshot === 'string' && screenshot.startsWith('data:image/')) {
+    const b64 = screenshot.split(',')[1] || '';
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length > 8 * 1024 * 1024) return res.status(400).json({ error: 'Screenshot is too large (8MB max).' });
+    screenshotBuf = buf;
+  }
+  const info = insertFeedbackStmt.run(text, clip(contact, 200), clip(page, 200), clip(database_type, 40), email, screenshotBuf);
   const id = Number(info.lastInsertRowid);
   res.json({ ok: true, id });
-  sendFeedbackMail({ id, message: text, contact: clip(contact, 200), page: clip(page, 200), databaseType: clip(database_type, 40) })
+  sendFeedbackMail({ id, message: text, contact: email || clip(contact, 200), page: clip(page, 200), databaseType: clip(database_type, 40) })
     .catch((e: unknown) => console.error('Feedback email failed:', e instanceof Error ? e.message : e));
 });
 
 app.get('/api/feedback', requireAdmin, (_req: Request, res: Response) => {
   res.json(listFeedbackStmt.all());
+});
+
+app.get('/api/feedback/:id/screenshot', requireAdmin, (req: Request, res: Response) => {
+  const row = getFeedbackScreenshotStmt.get(Number(req.params.id)) as { screenshot: Buffer | null } | undefined;
+  if (!row?.screenshot) return res.status(404).end();
+  res.setHeader('Content-Type', 'image/png');
+  res.send(row.screenshot);
+});
+
+app.post('/api/feedback/:id/replied', requireAdmin, (req: Request, res: Response) => {
+  const replied = req.body?.replied ? 1 : 0;
+  setFeedbackRepliedStmt.run(replied, Number(req.params.id));
+  res.json({ ok: true, replied: Boolean(replied) });
 });
 
 app.delete('/api/feedback/:id', requireAdmin, (req: Request, res: Response) => {

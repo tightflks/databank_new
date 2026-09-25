@@ -5,6 +5,7 @@ import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
+import { openFeedback } from './utils/feedback';
 import { titleCase, primaryName, aliasNames } from './utils/fmt';
 import { tokenMatches, wordsOf, canonicalText, searchTokens } from './utils/fuzzy';
 import { downloadReportPdf } from './utils/reportPdf';
@@ -1992,6 +1993,19 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
               )}
             </div>
 
+            {filteredProperties.length === 0 && (activeFilterCount > 0 || propertySearchText) ? (
+              <div className="bg-white border border-db-border rounded-xl py-10 px-6 text-center">
+                <p className="text-db-ink font-semibold mb-1">No properties match that search.</p>
+                <p className="text-sm text-db-muted mb-4">Try loosening a filter, or a shorter search term.</p>
+                <button
+                  onClick={() => openFeedback(`Search returned 0 results.\nDatabase: ${databaseType}\nQuick find: ${propertySearchText || '(none)'}\n`)}
+                  className="text-sm font-semibold text-db-navy hover:underline"
+                >
+                  Not what you expected? Report an issue →
+                </button>
+              </div>
+            ) : (
+            <>
             {/* Property List — cards on narrow screens instead of a wide table that just
                 scrolls sideways (the Sep 24 audit specifically flagged a 1,100px table on a
                 375px phone screen). */}
@@ -2134,6 +2148,8 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                 </div>
               )}
             </div>
+            </>
+            )}
             </>
             )}
           </div>

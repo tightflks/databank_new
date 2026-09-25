@@ -13,6 +13,7 @@ import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 import { registerPhotoRoutes, photosConfigured, getApprovedPhoto, fetchStaticMap, queuePhotoIfMissing } from './photos';
 import { registerUserRoutes, requireUser } from './users';
+import { registerNotesAiRoutes } from './notesAi';
 import { registerStatsRoutes } from './stats';
 import { registerUsageRoutes, recordUsage } from './usage';
 const Database = require('better-sqlite3');
@@ -2957,6 +2958,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 registerDropboxRoutes(app);
 registerPhotoRoutes(app, db);
 registerUserRoutes(app, db);
+registerNotesAiRoutes(app, db);
 registerStatsRoutes(app, db);
 registerUsageRoutes(app, db);
 

@@ -49,11 +49,30 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [notesAi, setNotesAi] = useState<{ cleaned: string; summary: string } | null>(null);
+  const [notesAiLoading, setNotesAiLoading] = useState(false);
+  const [notesAiError, setNotesAiError] = useState<string | null>(null);
+
+  const fetchNotesAi = async () => {
+    setNotesAiLoading(true);
+    setNotesAiError(null);
+    try {
+      const { data } = await axios.get(`${API_URL}/api/dropbox/report/notes-ai`, { params: { type, id } });
+      if (data.cleaned) setNotesAi(data);
+      else setNotesAiError("Couldn't build a cleaned-up version for this one — the original above is still complete.");
+    } catch {
+      setNotesAiError("Couldn't build a cleaned-up version right now — the original above is still complete.");
+    } finally {
+      setNotesAiLoading(false);
+    }
+  };
 
   useEffect(() => {
     const ctrl = new AbortController();
     setR(null);
     setError(null);
+    setNotesAi(null);
+    setNotesAiError(null);
     axios
       .get<Report>(`${API_URL}/api/dropbox/report`, { params: { type, id }, signal: ctrl.signal })
       .then((res) => { setR(res.data); trackUsage('report', { detail: res.data.name || id, database_type: type.toLowerCase() }); })
@@ -213,10 +232,29 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
 
         <SectionCard id="notes" title="Research Notes &amp; History">
           {r.comments ? (
-            <div className="bg-db-cream rounded-lg px-4 py-3 text-sm leading-relaxed text-db-subtle whitespace-pre-line">
-              <span className="block text-[11px] font-semibold text-db-muted mb-1 uppercase tracking-wide">Original researcher notes</span>
-              {r.comments}
-            </div>
+            <>
+              <div className="bg-db-cream rounded-lg px-4 py-3 text-sm leading-relaxed text-db-subtle whitespace-pre-line">
+                <span className="block text-[11px] font-semibold text-db-muted mb-1 uppercase tracking-wide">Original researcher notes</span>
+                {r.comments}
+              </div>
+              {notesAi ? (
+                <div className="border border-db-border rounded-lg px-4 py-3">
+                  <span className="block text-[11px] font-semibold text-db-navy mb-1 uppercase tracking-wide">Cleaned up by AI</span>
+                  {notesAi.summary && <p className="text-sm font-semibold text-db-ink mb-1">{notesAi.summary}</p>}
+                  <p className="text-sm leading-relaxed text-db-subtle whitespace-pre-line m-0">{notesAi.cleaned}</p>
+                </div>
+              ) : (
+                <button
+                  onClick={fetchNotesAi}
+                  disabled={notesAiLoading}
+                  className="self-start inline-flex items-center gap-2 text-sm font-semibold text-db-navy hover:underline disabled:opacity-60"
+                >
+                  {notesAiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  {notesAiLoading ? 'Cleaning up the notes…' : 'Show a cleaner, plain-English version'}
+                </button>
+              )}
+              {notesAiError && <p className="text-xs text-db-muted">{notesAiError}</p>}
+            </>
           ) : <p className="text-sm text-db-muted">No researcher notes on record.</p>}
         </SectionCard>
 

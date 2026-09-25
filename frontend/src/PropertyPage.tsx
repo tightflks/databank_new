@@ -19,6 +19,8 @@ type Report = {
   owner: string; ownerTrail: { week: string; value: string }[];
   saleList: { week: string; date: string; price: string; seller: string; buyer: string }[];
   loan: string; lender: string; broker: string; comments: string;
+  contacts: { label: string; value: string }[];
+  allFields: { label: string; value: string }[];
 };
 
 const money = (v: string) => { const n = Number(v); return v && !Number.isNaN(n) ? '$' + Math.round(n).toLocaleString('en-US') : v || '—'; };
@@ -198,7 +200,13 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
               ))}
             </ol>
           )}
-          {!r.loan && !r.lender && !r.broker && owners.length <= 1 && (
+          {r.contacts.length > 0 ? (
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2 pt-2 border-t border-db-border">
+              {r.contacts.map((c) => (
+                <div key={c.label} className="text-sm"><span className="text-db-muted">{c.label}:</span> {c.label.includes('Phone') || c.label.includes('Contact') ? <span className="num">{c.value}</span> : c.value}</div>
+              ))}
+            </div>
+          ) : owners.length <= 1 && (
             <p className="text-sm text-db-muted">No additional contacts on record.</p>
           )}
         </SectionCard>
@@ -215,7 +223,7 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
         <div id="all" className="md:col-span-2 bg-white border border-db-border rounded-xl px-6 py-5 flex items-center justify-between gap-4 flex-wrap scroll-mt-20">
           <div>
             <div className="font-semibold text-sm">Every field on record</div>
-            <div className="text-xs text-db-muted">{r.facts.length + (r.comments ? 1 : 0) + 5} fields from the research file</div>
+            <div className="text-xs text-db-muted">{r.allFields.length} fields from the research file</div>
           </div>
           <button onClick={() => setShowAll((v) => !v)} className="border border-db-navy text-db-navy px-4 py-2 rounded-lg text-sm font-semibold hover:bg-db-tint">
             {showAll ? 'Hide fields' : 'Show all fields'}
@@ -223,8 +231,8 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
         </div>
         {showAll && (
           <div className="md:col-span-2 bg-white border border-db-border rounded-xl px-6 py-5 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
-            {r.facts.map((f) => (
-              <div key={f.label}><div className="text-[11px] uppercase tracking-wide text-db-muted">{f.label}</div><div className="font-semibold text-sm num">{factValue(f)}</div></div>
+            {r.allFields.map((f) => (
+              <div key={f.label}><div className="text-[11px] uppercase tracking-wide text-db-muted">{f.label}</div><div className="font-semibold text-sm num break-words">{f.value}</div></div>
             ))}
           </div>
         )}

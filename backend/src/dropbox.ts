@@ -396,6 +396,8 @@ export type PropertyReport = {
   facts: { label: string; value: string }[];
   owner: string; ownerTrail: Trail; saleList: Sale[];
   loan: string; lender: string; broker: string; comments: string;
+  contacts: { label: string; value: string }[];
+  allFields: { label: string; value: string }[];
 };
 
 const FACT_FIELDS: [string, string][] = [
@@ -404,6 +406,51 @@ const FACT_FIELDS: [string, string][] = [
   ['ORIGINALLY BUILT', 'Originally built'], ['INSIDER DATE', 'Last published by Databank'],
 ];
 const YEAR_ONLY = new Set(['YEAR BUILT', 'BUILT\\COMPLETE', 'ORIGINALLY BUILT']);
+
+// Every party on the record with its rep, phone and mailing address, from the source's
+// prefixed columns (O = owner, S = seller, B = broker, L = lender, C L = construction lender…).
+// Ported from the frontend's old raw-row view so the full-page report keeps the same depth —
+// the redesign changed the page's look, not what data a paying customer can see.
+function buildContacts(c: Record<string, string>): { label: string; value: string }[] {
+  const get = (col: string) => c[col] ?? '';
+  const getAny = (...cols: string[]) => { for (const col of cols) { const v = get(col); if (v) return v; } return ''; };
+  const address = (prefix: string) => {
+    const street = properCase(`${get(`${prefix} STREET NUMBER`)} ${get(`${prefix} STREET NAME`)}`.trim());
+    const suite = get(`${prefix} SUITE NUMBER`);
+    const box = get(`${prefix} P O BOX NUMBER`);
+    const cityLine = [properCase(get(`${prefix} CITY`)), [get(`${prefix} STATE`), get(`${prefix} ZIP`)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    return [street, suite && `Suite ${suite}`, box && `P.O. Box ${box}`, cityLine].filter(Boolean).join(', ');
+  };
+  const party = (label: string, name: string, prefix: string, phones: string[], reps: string[] = [`${prefix} REP`, `${prefix} REP2`]) => {
+    if (!name) return [];
+    return [
+      { label, value: properCase(name) },
+      { label: `${label} Contact`, value: [properCase(reps.map(get).filter(Boolean).join(' / ')), getAny(...phones)].filter(Boolean).join(' · ') },
+      { label: `${label} Address`, value: address(prefix) },
+    ];
+  };
+  return [
+    ...party('Owner', get('OWNER') || get('TAX OWNER'), 'O', ['O PHONE', 'O PHONE2\\FAX', 'O PHONE2 FAX']),
+    ...party('2nd Owner', get('2ND OWNER'), '2ND OWNER', ['2ND OWNER PHONE']),
+    ...party('Seller', getAny('SELLER\\FORECLOSEE', 'SELLER'), 'S', ['S PHONE']),
+    ...party('Broker', get('BROKER'), 'B', ['BROKER PHONE', 'B PHONE']),
+    ...(get('BUILDER') ? [{ label: 'Builder', value: properCase(get('BUILDER')) }] : []),
+    ...party('Lender', get('LENDER'), 'L', ['L PHONE']),
+    ...party('Construction Lender', get('C LENDER'), 'C L', ['C L PHONE']),
+    ...party('Leasing', getAny('LEASING COMPANY', 'LEASING REP'), 'LEASING', ['LEASING PHONE']),
+    ...party('Management', get('MANAGEMENT COMPANY'), 'MANAGEMENT', ['MANAGEMENT PHONE']),
+    ...(get('ATTORNEY') ? [{ label: 'Attorney', value: [properCase(get('ATTORNEY')), get('ATTORNEY PHONE')].filter(Boolean).join(' · ') }] : []),
+    ...(get('ONSITE PHONE') ? [{ label: 'Onsite Telephone', value: get('ONSITE PHONE') }] : []),
+  ].filter((f) => f.value);
+}
+
+// Literally every non-empty column on the record, not just the curated facts/contacts above —
+// the "show me everything" escape hatch the old raw-row view had.
+function allFieldsOf(c: Record<string, string>): { label: string; value: string }[] {
+  return Object.entries(c)
+    .filter(([label, value]) => label && value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([label, value]) => ({ label, value: label.toUpperCase() === 'COMMENTS' || /^M\d+$/.test(label) ? value.trim() : properCase(value.trim()) }));
+}
 
 export async function propertyReport(type: string, id: string): Promise<PropertyReport | null> {
   const { hist, byId } = await loadHistory(type);
@@ -424,6 +471,8 @@ export async function propertyReport(type: string, id: string): Promise<Property
     ownerTrail: properTrail(trailOf(p, OWNER_FIELD).length ? trailOf(p, OWNER_FIELD) : trailOf(p, 'OWNER')),
     saleList: salesOf(p).map((s) => ({ ...s, seller: properCase(s.seller), buyer: properCase(s.buyer) })),
     loan: c['$ LOAN'] ?? '', lender: properCase(c['LENDER'] ?? ''), broker: properCase(c['BROKER'] ?? ''), comments: c['COMMENTS'] ?? '',
+    contacts: buildContacts(c),
+    allFields: allFieldsOf(c),
   };
 }
 

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import axios from 'axios';
-import { Lock, X, ArrowRight } from 'lucide-react';
+import { Lock, X, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
@@ -32,6 +32,7 @@ export default function LoginModal({ onClose, onAuthed, trialEndedFor }: Props) 
   const [company, setCompany] = useState('');
   const [email, setEmail] = useState(trialEndedFor ?? '');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -74,7 +75,25 @@ export default function LoginModal({ onClose, onAuthed, trialEndedFor }: Props) 
             </>
           )}
           <input type="email" required placeholder={mode === 'signup' ? 'Work email' : 'Email address'} value={email} onChange={(e) => setEmail(e.target.value)} className={input} />
-          <input type="password" required minLength={mode === 'signup' ? 8 : undefined} placeholder={mode === 'signup' ? 'Create a password (8+ characters)' : 'Password'} value={password} onChange={(e) => setPassword(e.target.value)} className={input} />
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              required
+              minLength={mode === 'signup' ? 8 : undefined}
+              placeholder={mode === 'signup' ? 'Create a password (8+ characters)' : 'Password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={`${input} pr-9`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
           {mode === 'signup' && (
             <p className="text-xs text-db-muted -mt-1">
               A work email gets you approved fastest. Using a personal address is fine too — we review new sign-ups and may call to confirm.

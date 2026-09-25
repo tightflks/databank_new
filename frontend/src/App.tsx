@@ -4,6 +4,7 @@ import axios from 'axios';
 import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare, Camera, BookOpen, BarChart3 } from 'lucide-react';
 import FeedbackWidget from './FeedbackWidget';
 import FeedbackList from './FeedbackList';
+import AdminUsers from './AdminUsers';
 import PhotoReview from './PhotoReview';
 import UsageList from './UsageList';
 import { trackUsage } from './utils/usage';
@@ -73,7 +74,7 @@ function parsePropertyRoute(): { type: string; id: string } | null {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback' | 'photos' | 'usage'>(ADMIN_ROUTE ? 'generate' : 'user');
+  const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback' | 'users' | 'photos' | 'usage'>(ADMIN_ROUTE ? 'generate' : 'user');
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [publicView, setPublicView] = useState<PublicView>(
@@ -520,6 +521,17 @@ function App() {
             Feedback
           </button>
           <button
+            onClick={() => setActiveTab('users')}
+            className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'users'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/80'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+            Users
+          </button>
+          <button
             onClick={() => setActiveTab('photos')}
             className={`py-4 px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeTab === 'photos'
@@ -810,6 +822,8 @@ function App() {
           </div>
         ) : activeTab === 'feedback' ? (
           <FeedbackList />
+        ) : activeTab === 'users' ? (
+          <AdminUsers />
         ) : activeTab === 'photos' ? (
           <PhotoReview />
         ) : activeTab === 'usage' ? (

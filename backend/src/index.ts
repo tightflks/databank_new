@@ -825,8 +825,9 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport, media: { photo: Buffer
   const photoUri = media.photo ? `data:image/jpeg;base64,${media.photo.toString('base64')}` : null;
   const mapUri = media.map ? `data:image/png;base64,${media.map.toString('base64')}` : null;
   const mediaHtml = photoUri || mapUri
-    ? `<div class="media">${photoUri ? `<div class="shot"><img src="${photoUri}" alt="Street view"><div class="cap">Street view</div></div>` : ''}${mapUri ? `<div class="shot"><img src="${mapUri}" alt="Map"><div class="cap">Location</div></div>` : ''}</div>`
+    ? `<div class="media">${photoUri ? `<div class="shot"><img src="${photoUri}" alt="Street view"><div class="cap">Street view</div><div class="note">From Google, matched by address — may not show the exact property or its current condition.</div></div>` : ''}${mapUri ? `<div class="shot"><img src="${mapUri}" alt="Map"><div class="cap">Location</div></div>` : ''}</div>`
     : '';
+  const mapsLink = where ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(where)}` : null;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(r.name || 'Databank property report')}</title><style>
     ${embeddedFontCss()}
     * { box-sizing: border-box; } body { font-family: Inter, Arial, sans-serif; color: #111827; margin: 0; padding: 40px 44px; font-size: 12.5px; line-height: 1.5; }
@@ -834,7 +835,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport, media: { photo: Buffer
     .brand b { font-size: 15px; color: #1e3a8a; letter-spacing: .01em; } .brand span { color: #6b7280; font-size: 11px; }
     h1 { font-size: 24px; margin: 0 0 2px; } .sub { color: #4b5563; margin-bottom: 4px; } .former { color: #6b7280; font-size: 11.5px; margin-bottom: 14px; }
     .lede { background: #eff6ff; border-left: 4px solid #1e3a8a; padding: 10px 14px; font-size: 14px; margin: 14px 0 20px; }
-    .media { display: flex; gap: 14px; margin: 14px 0 20px; } .shot { flex: 1; } .shot img { width: 100%; height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; display: block; } .shot .cap { font-size: 10px; text-transform: uppercase; letter-spacing: .01em; color: #6b7280; margin-top: 4px; }
+    .media { display: flex; gap: 14px; margin: 14px 0 20px; } .shot { flex: 1; } .shot img { width: 100%; height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; display: block; } .shot .cap { font-size: 10px; text-transform: uppercase; letter-spacing: .01em; color: #6b7280; margin-top: 4px; } .shot .note { font-size: 9.5px; color: #9ca3af; margin-top: 1px; }
     h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .01em; color: #1e3a8a; margin: 20px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
     .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 16px; } .fact .k { color: #6b7280; font-size: 10.5px; text-transform: uppercase; letter-spacing: .01em; } .fact .v { font-weight: 700; font-size: 14px; }
     table { width: 100%; border-collapse: collapse; } th { text-align: left; color: #6b7280; font-size: 10.5px; text-transform: uppercase; letter-spacing: .01em; padding: 4px 8px 4px 0; border-bottom: 1px solid #e5e7eb; }
@@ -844,7 +845,7 @@ function propertyReportHtml(r: dropboxAsk.PropertyReport, media: { photo: Buffer
   </style></head><body>
     <div class="brand">${reportBrand()}<span>Property report · ${esc(longDate(new Date().toISOString().slice(0, 10)))}</span></div>
     <h1>${esc(r.name || '(unnamed property)')}${r.removed ? `<span class="tag">no longer on the current list</span>` : ''}</h1>
-    <div class="sub">${esc(where)}${r.parcel ? ` · Parcel ${esc(r.parcel)}` : ''}</div>
+    <div class="sub">${esc(where)}${r.parcel ? ` · Parcel ${esc(r.parcel)}` : ''}${mapsLink ? ` · <a href="${mapsLink}" style="color:#1e3a8a;">View on Google Maps</a>` : ''}</div>
     ${r.formerNames.length ? `<div class="former">Formerly known as ${esc(r.formerNames.join(', '))}</div>` : ''}
     <div class="lede">${lede}</div>
     ${mediaHtml}

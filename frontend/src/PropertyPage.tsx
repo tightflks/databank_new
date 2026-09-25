@@ -153,7 +153,7 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
           <Flag className="w-4 h-4" /> Report a data issue
         </button>
         <button onClick={downloadPdf} disabled={downloading} className="inline-flex items-center gap-1.5 bg-db-green text-white px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50">
-          {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Export to Excel
+          {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download PDF
         </button>
       </div>
 
@@ -169,7 +169,10 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
           {r.formerNames.length > 0 && (
             <div className="text-sm text-db-subtle">Formerly {r.formerNames.map(titleCase).join(' · ')}</div>
           )}
-          <div className="text-sm text-db-subtle">{where}{r.parcel && <> · Parcel {r.parcel}</>}</div>
+          <div className="text-sm text-db-subtle">
+            {where}{r.parcel && <> · Parcel {r.parcel}</>}
+            {where && <> · <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(where)}`} target="_blank" rel="noopener noreferrer" className="text-db-navy hover:underline">View on Google Maps</a></>}
+          </div>
           {heroFacts.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
               {heroFacts.map((f) => <StatTile key={f.label} label={f.label} value={factValue(f)} />)}

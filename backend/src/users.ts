@@ -1,6 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
-import { isAdmin } from './auth';
+import { isAdmin, requireAdmin } from './auth';
+import { sendWelcomeMail } from './mail';
 
 // Customer accounts: self-serve signup (email + a password the user picks themselves — not
 // something we generate and hand them, which is what made the old Becton accounts hard to
@@ -199,6 +200,7 @@ export function registerUserRoutes(app: Express, db: Db) {
     sessions.set(token, { token_exp: Date.now() + SESSION_MS, userId: result.lastInsertRowid });
     setSessionCookie(res, req, token);
     res.json({ email, trialEndsAt, paidUntil: null, hasAccess: true, daysLeft: TRIAL_DAYS });
+    sendWelcomeMail(email, firstName).catch((e) => console.error('Welcome email failed:', e instanceof Error ? e.message : e));
   });
 
   app.post('/api/account/login', (req: Request, res: Response) => {
@@ -241,5 +243,45 @@ export function registerUserRoutes(app: Express, db: Db) {
       hasAccess: hasAccess(session),
       daysLeft: daysLeft(session.paidUntil ?? session.trialEndsAt),
     });
+  });
+
+  // Admin: see who's signed up, who's currently active (trial or paid), and flip someone to
+  // paid or disabled by hand — there's no payment processor wired in yet (most customers here
+  // pay by check/ACH through an AP department), so this is how an admin actually grants access
+  // once a payment comes in.
+  const listUsersStmt = db.prepare('SELECT * FROM users ORDER BY created_date DESC');
+  const setPaidStmt = db.prepare('UPDATE users SET paid_until = ? WHERE id = ?');
+  const setDisabledStmt = db.prepare('UPDATE users SET disabled = ? WHERE id = ?');
+
+  app.get('/api/account/admin/users', requireAdmin, (_req: Request, res: Response) => {
+    const rows = listUsersStmt.all() as UserRow[];
+    const users = rows.map((row) => {
+      const session = userToSession(row);
+      return {
+        id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, company: row.company,
+        createdDate: row.created_date, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until,
+        disabled: Boolean(row.disabled), hasAccess: !row.disabled && hasAccess(session),
+      };
+    });
+    res.json({ users, activeCount: users.filter((u) => u.hasAccess).length, totalCount: users.length });
+  });
+
+  // paidUntil: an ISO date string to grant access through, or null for "paid, no end date."
+  // Sending neither (paidUntil: undefined isn't valid JSON, so send null explicitly) reverts
+  // to trial-only access.
+  app.post('/api/account/admin/users/:id/paid', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const paidUntil = typeof req.body?.paidUntil === 'string' ? req.body.paidUntil : null;
+    setPaidStmt.run(paidUntil, id);
+    res.json({ ok: true, paidUntil });
+  });
+
+  app.post('/api/account/admin/users/:id/disabled', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const disabled = req.body?.disabled ? 1 : 0;
+    setDisabledStmt.run(disabled, id);
+    res.json({ ok: true, disabled: Boolean(disabled) });
   });
 }

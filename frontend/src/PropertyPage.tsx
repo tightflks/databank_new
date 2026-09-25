@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Loader2, AlertCircle, Link2, Flag, Download } from 'lucide-react';
-import { titleCase } from './utils/fmt';
+import { titleCase, fmtDate } from './utils/fmt';
 import { downloadReportPdf } from './utils/reportPdf';
 import { trackUsage } from './utils/usage';
 import PropertyPhoto from './PropertyPhoto';
@@ -24,7 +24,7 @@ type Report = {
 };
 
 const money = (v: string) => { const n = Number(v); return v && !Number.isNaN(n) ? '$' + Math.round(n).toLocaleString('en-US') : v || '—'; };
-const num = (v: string) => { const n = Number(v); return v && !Number.isNaN(n) ? n.toLocaleString('en-US') : v || '—'; };
+const num = (v: string) => { const n = Number(v); return v && !Number.isNaN(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : v || '—'; };
 
 function StatTile({ label, value }: { label: string; value: string }) {
   return (
@@ -126,11 +126,15 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
   const sales = [...r.saleList].reverse();
   const owners = [...r.ownerTrail].reverse();
   const last = r.saleList[r.saleList.length - 1];
-  const where = [titleCase(r.address), titleCase(r.city), r.county ? `${titleCase(r.county)} County` : '', r.zip].filter(Boolean).join(', ');
+  const isLand = r.type === 'LANDSALE';
+  const noStreetNumber = isLand && !!r.address && !/^\d/.test(r.address.trim());
+  const addressLine = noStreetNumber ? `Land on ${titleCase(r.address)}` : titleCase(r.address);
+  const where = [addressLine, titleCase(r.city), r.county ? `${titleCase(r.county)} County` : '', r.zip].filter(Boolean).join(', ');
   const sameOwner = !!last && !!last.buyer && last.buyer.toUpperCase() === last.seller.toUpperCase();
 
-  const factValue = (f: { label: string; value: string }) => (/price/i.test(f.label) ? money(f.value) : /built/i.test(f.label) ? f.value : num(f.value));
-  const heroFacts = r.facts.slice(0, 6);
+  const factValue = (f: { label: string; value: string }) => (/price/i.test(f.label) ? money(f.value) : /published|date/i.test(f.label) ? fmtDate(f.value) : /built/i.test(f.label) ? f.value : num(f.value));
+  // Land parcels don't have a building, so a "Built"/"Year built" fact is confusing there.
+  const heroFacts = (isLand ? r.facts.filter((f) => !/built/i.test(f.label)) : r.facts).slice(0, 6);
 
   return (
     <div className="min-h-screen bg-db-cream font-sans text-db-text">
@@ -201,13 +205,17 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
               </tbody>
             </table>
           )}
-          {(r.loan || r.lender || r.broker) && (
-            <div className="pt-3 border-t border-db-border text-sm flex flex-wrap gap-x-6 gap-y-1">
-              {r.loan && <span><span className="text-db-muted">Loan:</span> <b className="num">{money(r.loan)}</b></span>}
-              {r.lender && <span><span className="text-db-muted">Lender:</span> {titleCase(r.lender)}</span>}
-              {r.broker && <span><span className="text-db-muted">Broker:</span> {titleCase(r.broker)}</span>}
-            </div>
-          )}
+          <div className="pt-3 border-t border-db-border text-sm flex flex-wrap gap-x-6 gap-y-1">
+            {r.loan || r.lender || r.broker ? (
+              <>
+                {r.loan && <span><span className="text-db-muted">Loan:</span> <b className="num">{money(r.loan)}</b></span>}
+                {r.lender && <span><span className="text-db-muted">Lender:</span> {titleCase(r.lender)}</span>}
+                {r.broker && <span><span className="text-db-muted">Broker:</span> {titleCase(r.broker)}</span>}
+              </>
+            ) : (
+              <span className="text-db-muted">No financing recorded.</span>
+            )}
+          </div>
         </SectionCard>
 
         <SectionCard id="ownership" title="Ownership & Contacts">

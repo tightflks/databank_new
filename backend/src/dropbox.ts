@@ -242,11 +242,51 @@ const histCache = new Map<string, Loaded>();
 
 const SALE_FIELDS = new Set(['SALE DATE', 'SALE PRICE', 'TAX OWNER', 'OWNER']);
 
+// Real-estate shorthand that should stay in caps rather than get title-cased, and the
+// research file's ordinal suffixes ("2ND", "3RD") which PROPER-style casing would otherwise
+// mangle into "2Nd", "3Rd" — genuinely wrong regardless of matching Excel's PROPER exactly.
+const KEEP_CAPS = new Set(['LLC', 'LLP', 'LP', 'LTD', 'INC', 'CO', 'PC', 'JV', 'MF', 'DBA', 'TIC', 'HOA', 'REIT']);
+
+// Researchers flag a record with a leading/trailing "*" or "#" in the name field itself (e.g.
+// "*PLAINVIEW 2ND PHASE") — a marker for their own internal tracking, not part of the actual
+// property name, and not something a customer reading a report should see.
+function stripMarkers(s: string): string {
+  return s.replace(/^[*#\s]+|[*#\s]+$/g, '');
+}
+
+// Researchers write "UNKNOWN TO US" (or similar) when a field genuinely wasn't found — that's
+// internal shorthand, not something to show a paying customer verbatim.
+function orNotDisclosed(s: string): string {
+  return /^(unknown( to us)?|n\/?a|none|not (available|disclosed|found))$/i.test(s.trim()) ? 'Not disclosed' : s;
+}
+
+// Multi-party names come from the source as a comma-joined, un-spaced list ("Shirley
+// Cooper,Judy Tullis,Etal") — add the missing spaces after commas and normalize any spelling
+// of "et al" (which properCase alone would leave as "Etal") to "et al."
+function formatPartyList(s: string): string {
+  return s
+    .replace(/,(?=\S)/g, ', ')
+    .replace(/\bEt\s*al\.?/gi, 'et al.')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Excel PROPER()-equivalent, for display only (never applied to the raw data used for
 // matching/search). Matches Excel's real behavior, including capitalizing the letter right
-// after an apostrophe (e.g. "MCDONALD'S" -> "Mcdonald'S"), rather than a "smarter" version.
+// after an apostrophe (e.g. "MCDONALD'S" -> "Mcdonald'S"), rather than a "smarter" version —
+// except for the two cases above, which are wrong often enough to be worth a specific fix
+// rather than literal PROPER fidelity.
 function properCase(s: string): string {
-  return s.toLowerCase().replace(/\p{L}+/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+  const titled = s.replace(/\p{L}+/gu, (w) => {
+    const upper = w.toUpperCase();
+    if (KEEP_CAPS.has(upper)) return upper;
+    const lower = w.toLowerCase();
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  });
+  // The title-casing above treats the letters after a digit as their own word ("2ND" -> "2"
+  // + "Nd"), which is correct for most abbreviations but wrong for an ordinal suffix. Put it
+  // back down: "2Nd" -> "2nd".
+  return titled.replace(/(\d)(St|Nd|Rd|Th)\b/g, (_m, d: string, suf: string) => d + suf.toLowerCase());
 }
 
 // Punctuation-free lowercase, so "Cassville-White Rd" and "cassville white" meet.
@@ -401,6 +441,7 @@ export type PropertyReport = {
 };
 
 const FACT_FIELDS: [string, string][] = [
+  ['P TYPE', 'Property type'], ['PROJECT TYPE', 'Property type'], ['MARKET AREA', 'Submarket'],
   ['UNITS COMPLETED:', 'Units'], ['UNITS COMPLETED', 'Units'], ['$ UNIT PROJECT', 'Price per unit'], ['# SQ FT BUILT', 'Square feet built'],
   ['HEATED SF', 'Square feet'], ['# ACRES', 'Acres'], ['$ ACRE', 'Price per acre'], ['YEAR BUILT', 'Year built'], ['BUILT\\COMPLETE', 'Built'],
   ['ORIGINALLY BUILT', 'Originally built'], ['INSIDER DATE', 'Last published by Databank'],
@@ -424,7 +465,7 @@ function buildContacts(c: Record<string, string>): { label: string; value: strin
   const party = (label: string, name: string, prefix: string, phones: string[], reps: string[] = [`${prefix} REP`, `${prefix} REP2`]) => {
     if (!name) return [];
     return [
-      { label, value: properCase(name) },
+      { label, value: orNotDisclosed(formatPartyList(properCase(name))) },
       { label: `${label} Contact`, value: [properCase(reps.map(get).filter(Boolean).join(' / ')), getAny(...phones)].filter(Boolean).join(' · ') },
       { label: `${label} Address`, value: address(prefix) },
     ];
@@ -460,17 +501,17 @@ export async function propertyReport(type: string, id: string): Promise<Property
   const names = trailOf(p, 'P NAME').map((n) => n.value).filter((n) => n && norm(n) !== norm(p.name));
   const facts = FACT_FIELDS.filter(([f]) => c[f]).map(([f, label]) => ({
     label,
-    value: YEAR_ONLY.has(f) ? c[f].slice(0, 4) : c[f],
+    value: YEAR_ONLY.has(f) ? c[f].slice(0, 4) : properCase(c[f]),
   }));
-  const properTrail = (t: Trail): Trail => t.map((x) => ({ ...x, value: properCase(x.value) }));
+  const properTrail = (t: Trail): Trail => t.map((x) => ({ ...x, value: formatPartyList(properCase(x.value)) }));
   return {
-    id: p.id, type, name: properCase(p.name), formerNames: Array.from(new Set(names)).map(properCase), address: properCase(p.address), city: properCase(p.city), county: properCase(p.county), zip: c['P ZIP'] ?? '', parcel: p.parcel,
+    id: p.id, type, name: properCase(stripMarkers(p.name)), formerNames: Array.from(new Set(names)).map((n) => properCase(stripMarkers(n))), address: properCase(p.address), city: properCase(p.city), county: properCase(p.county), zip: c['P ZIP'] ?? '', parcel: p.parcel,
     removed: p.removed, first: p.first, last: p.last, weeks: hist.weeks.length,
     facts,
-    owner: properCase(c[OWNER_FIELD] ?? c['OWNER'] ?? ''),
+    owner: formatPartyList(properCase(c[OWNER_FIELD] ?? c['OWNER'] ?? '')),
     ownerTrail: properTrail(trailOf(p, OWNER_FIELD).length ? trailOf(p, OWNER_FIELD) : trailOf(p, 'OWNER')),
-    saleList: salesOf(p).map((s) => ({ ...s, seller: properCase(s.seller), buyer: properCase(s.buyer) })),
-    loan: c['$ LOAN'] ?? '', lender: properCase(c['LENDER'] ?? ''), broker: properCase(c['BROKER'] ?? ''), comments: c['COMMENTS'] ?? '',
+    saleList: salesOf(p).map((s) => ({ ...s, seller: formatPartyList(properCase(s.seller)), buyer: formatPartyList(properCase(s.buyer)) })),
+    loan: c['$ LOAN'] ?? '', lender: orNotDisclosed(properCase(c['LENDER'] ?? '')), broker: orNotDisclosed(properCase(c['BROKER'] ?? '')), comments: c['COMMENTS'] ?? '',
     contacts: buildContacts(c),
     allFields: allFieldsOf(c),
   };

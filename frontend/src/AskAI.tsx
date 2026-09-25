@@ -1,7 +1,7 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import axios from 'axios';
 import { ChevronDown, ChevronUp, FileSpreadsheet, History, Loader2, X } from 'lucide-react';
-import { PropertyReport } from './PropertyReport';
+import { navigateToProperty } from './utils/navigate';
 import { fmtDate, fmtValue } from './utils/fmt';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
@@ -219,10 +219,12 @@ async function exportHistory(answer: HistoryAnswer, asked?: string) {
 export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnswer; asked?: string; onClose: () => void }) {
   const live = answer.question === 'property_history' ? answer.items.filter((it) => !isRanked(it) && !(it as AskItem).removed) : [];
   const single = live.length === 1 ? (live[0] as AskItem).id : null;
-  const [open, setOpen] = useState<string | null>(single);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showRecords, setShowRecords] = useState(!answer.summary && !single);
   const [exporting, setExporting] = useState(false);
+  useEffect(() => {
+    if (single) navigateToProperty(answer.type, single);
+  }, [single, answer.type]);
   const what = answer.subject || answer.entity || answer.field || '';
   const kind = `${TITLES[answer.question] ?? answer.question}${what ? `: ${what}` : ''}`;
   const doExport = async () => {
@@ -272,8 +274,6 @@ export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnsw
           </button>
         </div>
       )}
-      {open && <PropertyReport type={answer.type} id={open} onClose={() => setOpen(null)} />}
-
       {!showRecords ? null : answer.items.length > 0 && isRanked(answer.items[0]) ? (
         <table className="min-w-full divide-y divide-gray-100">
           <thead className="bg-gray-50"><tr>{['#', answer.question === 'top_buyers' ? 'Buyer' : 'Seller', 'Properties'].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
@@ -286,7 +286,7 @@ export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnsw
                   {e.count}
                   <span className="ml-2 text-xs">
                     {e.properties.map((id) => (
-                      <button key={id} onClick={() => setOpen(id)} className="text-blue-600 hover:underline mr-2">{id}</button>
+                      <button key={id} onClick={() => navigateToProperty(answer.type, id)} className="text-blue-600 hover:underline mr-2">{id}</button>
                     ))}
                   </span>
                 </td>
@@ -314,7 +314,7 @@ export function HistoryResults({ answer, asked, onClose }: { answer: HistoryAnsw
                     <td className={`${TD} font-mono text-xs`}>{p.saleDate}</td>
                     <td className={TD}>{fmtValue('SALE PRICE', p.salePrice)}</td>
                     <td className={TD}>{answer.question === 'entity_history' ? p.role : p.first.slice(0, 7)}</td>
-                    <td className={TD}><button onClick={(e) => { e.stopPropagation(); setOpen(p.id); }} className="text-blue-600 hover:underline text-xs whitespace-nowrap">Report / PDF</button></td>
+                    <td className={TD}><button onClick={(e) => { e.stopPropagation(); navigateToProperty(answer.type, p.id); }} className="text-blue-600 hover:underline text-xs whitespace-nowrap">Report / PDF</button></td>
                   </tr>
                   {expanded === p.id && (
                     <tr className="bg-amber-50/40">

@@ -8,6 +8,7 @@ import PhotoReview from './PhotoReview';
 import UsageList from './UsageList';
 import { trackUsage } from './utils/usage';
 import UserDashboard from './UserDashboard';
+import PropertyPage from './PropertyPage';
 import Home from './Home';
 import LoginModal, { type AccountInfo } from './LoginModal';
 import DatabaseStatus from './DatabaseStatus';
@@ -60,7 +61,16 @@ const databaseLabel = (value?: string) => {
 type PublicView = 'home' | 'search' | 'help';
 
 // Customers land on / (User View only); administrators use /admin.
+import { propertyUrl } from './utils/navigate';
+
 const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
+
+// /property/:type/:id — a real, shareable URL per property (was a pop-up modal before Sep 24
+// feedback: "I don't like opening new tabs... each property should have its own address").
+function parsePropertyRoute(): { type: string; id: string } | null {
+  const m = window.location.pathname.match(/^\/property\/([^/]+)\/([^/]+)\/?$/);
+  return m ? { type: decodeURIComponent(m[1]), id: decodeURIComponent(m[2]) } : null;
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState<'generate' | 'history' | 'user' | 'databases' | 'weekly' | 'feedback' | 'photos' | 'usage'>(ADMIN_ROUTE ? 'generate' : 'user');
@@ -70,6 +80,23 @@ function App() {
     window.location.hash === '#search' ? 'search' : window.location.hash.startsWith('#help') ? 'help' : 'home',
   );
   const [loginOpen, setLoginOpen] = useState(false);
+  const [propertyRoute, setPropertyRoute] = useState(parsePropertyRoute());
+
+  useEffect(() => {
+    const onPop = () => setPropertyRoute(parsePropertyRoute());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const openProperty = (type: string, id: string) => {
+    window.history.pushState(null, '', propertyUrl(type, id));
+    setPropertyRoute({ type, id });
+    window.scrollTo({ top: 0 });
+  };
+  const closeProperty = () => {
+    window.history.pushState(null, '', publicView === 'search' ? '#search' : '/');
+    setPropertyRoute(null);
+  };
   const [account, setAccount] = useState<AccountInfo | null | undefined>(undefined); // undefined = still loading
   const [trialEndedFor, setTrialEndedFor] = useState<string | null>(null);
 
@@ -82,13 +109,13 @@ function App() {
       .catch(() => setAccount(null));
   }, []);
 
-  // Opening #search without an active account (fresh visit, or a session whose trial just
-  // ended) should prompt sign-in immediately rather than showing an empty/broken dashboard.
+  // Opening #search or a direct property link without an active account (fresh visit, or a
+  // session whose trial just ended) should prompt sign-in immediately.
   useEffect(() => {
-    if (publicView !== 'search' || account === undefined) return;
+    if ((publicView !== 'search' && !propertyRoute) || account === undefined) return;
     if (!account) { setLoginOpen(true); return; }
     if (!account.hasAccess) { setTrialEndedFor(account.email); setLoginOpen(true); }
-  }, [publicView, account]);
+  }, [publicView, propertyRoute, account]);
 
   const accountLogout = async () => {
     await axios.post(`${API_URL}/api/account/logout`).catch(() => undefined);
@@ -129,6 +156,12 @@ function App() {
     setPublicView(v);
     window.history.replaceState(null, '', v === 'home' ? '/' : `#${v}`);
     window.scrollTo({ top: 0 });
+  };
+
+  const [pendingQuery, setPendingQuery] = useState<string | undefined>(undefined);
+  const startSearch = (query?: string) => {
+    setPendingQuery(query);
+    showPublic('search');
   };
 
   useEffect(() => {
@@ -321,6 +354,24 @@ function App() {
     }
   };
 
+  if (!ADMIN_ROUTE && propertyRoute) {
+    if (account?.hasAccess) {
+      return <PropertyPage type={propertyRoute.type} id={propertyRoute.id} onBack={closeProperty} admin={Boolean(isAdmin)} />;
+    }
+    return (
+      <>
+        {loginOpen && (
+          <LoginModal
+            trialEndedFor={trialEndedFor}
+            onClose={() => { setLoginOpen(false); setTrialEndedFor(null); closeProperty(); showPublic('home'); }}
+            onAuthed={(acct) => { setAccount(acct); setTrialEndedFor(null); setLoginOpen(false); }}
+          />
+        )}
+        <div className="min-h-screen bg-gray-50" />
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Brand bar — matches databankinfo.com (navy wordmark, "Research Database") */}
@@ -510,7 +561,7 @@ function App() {
                 ))}
               </div>
             </div>
-            {publicView === 'home' ? <Home onStart={() => showPublic('search')} /> : publicView === 'help' ? <Help onExit={() => showPublic('search')} /> : account?.hasAccess ? <UserDashboard /> : null}
+            {publicView === 'home' ? <Home onStart={startSearch} /> : publicView === 'help' ? <Help onExit={() => showPublic('search')} /> : account?.hasAccess ? <UserDashboard onOpenProperty={openProperty} initialQuery={pendingQuery} /> : null}
           </>
         ) : !isAdmin ? (
           isAdmin === null ? null : <AdminLogin onLogin={() => setIsAdmin(true)} />
@@ -735,7 +786,7 @@ function App() {
             )}
           </div>
         ) : activeTab === 'user' ? (
-          <UserDashboard />
+          <UserDashboard onOpenProperty={openProperty} />
         ) : activeTab === 'databases' ? (
           <DatabaseStatus />
         ) : activeTab === 'weekly' ? (

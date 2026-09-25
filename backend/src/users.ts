@@ -28,6 +28,9 @@ type UserRow = {
   trial_ends_at: string;
   paid_until: string | null;
   disabled: number;
+  first_name: string | null;
+  last_name: string | null;
+  company: string | null;
 };
 
 type Session = { userId: number; email: string; trialEndsAt: number; paidUntil: number | null };
@@ -112,7 +115,7 @@ let db_: Db | null = null;
 const getUserByEmailStmt = () => db_!.prepare('SELECT * FROM users WHERE email = ?');
 const getUserByIdStmt = () => db_!.prepare('SELECT * FROM users WHERE id = ?');
 const insertUserStmt = () =>
-  db_!.prepare('INSERT INTO users (email, password_hash, salt, trial_ends_at) VALUES (?, ?, ?, ?)');
+  db_!.prepare('INSERT INTO users (email, password_hash, salt, trial_ends_at, first_name, last_name, company) VALUES (?, ?, ?, ?, ?, ?, ?)');
 
 // Reads the live row on every gated request (not just at login) so an admin marking someone
 // paid, or disabling an account, takes effect immediately rather than waiting for a new login.
@@ -156,12 +159,20 @@ export function registerUserRoutes(app: Express, db: Db) {
     );
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
   `);
+  // Added after the table already existed in production, so each is a separate migration
+  // guarded against "column already exists" rather than part of the CREATE TABLE above.
+  for (const col of ['first_name TEXT', 'last_name TEXT', 'company TEXT']) {
+    try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch { /* already added */ }
+  }
 
   app.post('/api/account/signup', (req: Request, res: Response) => {
     const ip = req.ip || 'unknown';
     if (attemptLimited(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
     const email = normalizeEmail(req.body?.email);
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const firstName = typeof req.body?.firstName === 'string' ? req.body.firstName.trim().slice(0, 100) : null;
+    const lastName = typeof req.body?.lastName === 'string' ? req.body.lastName.trim().slice(0, 100) : null;
+    const company = typeof req.body?.company === 'string' ? req.body.company.trim().slice(0, 200) : null;
     if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     if (getUserByEmailStmt().get(email)) {
@@ -170,12 +181,12 @@ export function registerUserRoutes(app: Express, db: Db) {
     }
     const { salt, hash } = hashPassword(password);
     const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const result = insertUserStmt().run(email, hash, salt, trialEndsAt) as { lastInsertRowid: number };
+    const result = insertUserStmt().run(email, hash, salt, trialEndsAt, firstName, lastName, company) as { lastInsertRowid: number };
     recordAttempt(ip, false);
     const token = randomBytes(32).toString('hex');
     sessions.set(token, { token_exp: Date.now() + SESSION_MS, userId: result.lastInsertRowid });
     setSessionCookie(res, req, token);
-    res.json({ email, trialEndsAt, daysLeft: TRIAL_DAYS });
+    res.json({ email, trialEndsAt, paidUntil: null, hasAccess: true, daysLeft: TRIAL_DAYS });
   });
 
   app.post('/api/account/login', (req: Request, res: Response) => {

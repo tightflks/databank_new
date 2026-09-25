@@ -1,7 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
-import PropertyPhoto from './PropertyPhoto';
-import PropertyMap from './PropertyMap';
 import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock, FileDown } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
@@ -9,14 +7,10 @@ import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
 import { titleCase, primaryName, aliasNames } from './utils/fmt';
 import { tokenMatches, wordsOf, canonicalText, searchTokens } from './utils/fuzzy';
-import { parseComments } from './utils/comments';
-import { PropertyReport } from './PropertyReport';
 import { downloadReportPdf } from './utils/reportPdf';
 import { trackUsage } from './utils/usage';
 
 const PAGE_SIZE = 100;
-const ADMIN_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/admin';
-
 // Re-filtering 2,600 rows on every keystroke made typing lag; filter on the settled value instead.
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -83,7 +77,7 @@ interface Filters {
   unitsRange: { min: number; max: number };
 }
 
-function UserDashboard() {
+function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type: string, id: string) => void; initialQuery?: string }) {
   const [activeView, setActiveView] = useState<'search' | 'history' | 'dashboard' | 'reports'>('search');
   const [databaseType, setDatabaseType] = useState('apartments');
   const [reports, setReports] = useState<SavedReport[]>([]);
@@ -134,14 +128,12 @@ function UserDashboard() {
   const [landSaleDateBefore, setLandSaleDateBefore] = useState('');
   const [latestUploadName, setLatestUploadName] = useState('');
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
-  const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
   const [historyDb, setHistoryDb] = useState<string | null>(null);
-  const [reportFor, setReportFor] = useState<{ type: string; id: string } | null>(null);
   const [reportBusy, setReportBusy] = useState<'report' | 'pdf' | null>(null);
 
   // AI natural language search states
-  const [aiQuery, setAiQuery] = useState('');
+  const [aiQuery, setAiQuery] = useState(initialQuery ?? '');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
@@ -649,6 +641,28 @@ function UserDashboard() {
 
   const sortMark = (key: SortKey) => (sort?.key === key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
 
+  // Stat cards above the results table — total volume, units, median $/unit, largest sale —
+  // computed from whatever's currently filtered, so they update live as the person narrows in.
+  const resultStats = useMemo(() => {
+    let volume = 0, unitTotal = 0;
+    const ppus: number[] = [];
+    let biggest: Property | null = null;
+    for (const p of filteredProperties) {
+      const price = Number(p.salePrice);
+      if (price > 0) {
+        volume += price;
+        if (!biggest || price > Number(biggest.salePrice)) biggest = p;
+      }
+      const u = Number(p.units);
+      if (u > 0) unitTotal += u;
+      const ppu = Number(p.pricePerUnit);
+      if (ppu > 0) ppus.push(ppu);
+    }
+    ppus.sort((a, b) => a - b);
+    const median = ppus.length ? ppus[Math.floor(ppus.length / 2)] : 0;
+    return { volume, unitTotal, median, biggest };
+  }, [filteredProperties]);
+
   const activeFilterCount = [
     selectedCity, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller,
     ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice,
@@ -765,7 +779,7 @@ function UserDashboard() {
     try {
       const found = await findArchiveProperty(p);
       if (!found) { alert('This property is not in the history archive yet, so there is no report for it.'); return; }
-      if (mode === 'report') setReportFor(found);
+      if (mode === 'report') onOpenProperty(found.type, found.id);
       else await downloadReportPdf(found.type, found.id, primaryName(p.propertyName));
     } catch (e) {
       console.error('Report failed:', e);
@@ -959,6 +973,17 @@ function UserDashboard() {
     }
   };
 
+  // Arriving from the homepage's hero search box with a query already typed — run it once,
+  // rather than making the person retype or re-click Search.
+  const ranInitialQuery = useRef(false);
+  useEffect(() => {
+    if (initialQuery && !ranInitialQuery.current) {
+      ranInitialQuery.current = true;
+      handleAiSearch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const getReportValue = (property: Property, colName: string) => {
     const idx = excelHeaders.findIndex((h: string) => h && h.trim() === colName);
     if (idx === -1) return '';
@@ -966,15 +991,6 @@ function UserDashboard() {
     if (value === undefined || value === null || value === '') return '';
     if (colName.toUpperCase().includes('DATE')) return formatExcelDate(value);
     return String(value).trim();
-  };
-
-  // Resolve a report value from the first matching column alias (apartment vs industrial header names)
-  const getReportValueAny = (property: Property, ...colNames: string[]) => {
-    for (const colName of colNames) {
-      const value = getReportValue(property, colName);
-      if (value) return value;
-    }
-    return '';
   };
 
   // Industrial files size properties by square feet instead of unit counts
@@ -993,6 +1009,65 @@ function UserDashboard() {
     ['saleDate', 'Sale Date'],
     ['insiderDate', 'Insider Date'],
   ] as [SortKey, string][]);
+
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('databank_hidden_cols') || '[]')); } catch { return new Set(); }
+  });
+  const [colPickerOpen, setColPickerOpen] = useState(false);
+  const toggleCol = (key: string) => {
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      try { localStorage.setItem('databank_hidden_cols', JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const colVisible = (key: string) => !hiddenCols.has(key);
+
+  type SavedSearch = {
+    id: string; name: string; query: string; databaseType: string;
+    // A reasonable, not-exhaustive snapshot of filter state — the AI query and quick-find text
+    // cover most real searches; the rest are the filters people set by hand most often.
+    propertySearchText: string; selectedCity: string; selectedCounties: string[]; selectedMarketArea: string;
+    selectedZipcode: string; minPrice: string; maxPrice: string; minUnits: string; maxUnits: string; selectedDate: string;
+  };
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>(() => {
+    try { return JSON.parse(localStorage.getItem('databank_saved_searches') || '[]'); } catch { return []; }
+  });
+  const [savedSearchOpen, setSavedSearchOpen] = useState(false);
+  const persistSavedSearches = (list: SavedSearch[]) => {
+    setSavedSearches(list);
+    try { localStorage.setItem('databank_saved_searches', JSON.stringify(list)); } catch { /* ignore */ }
+  };
+  const saveCurrentSearch = () => {
+    const name = window.prompt('Name this search', aiQuery || propertySearchText || `${databaseType} search`);
+    if (!name) return;
+    const s: SavedSearch = {
+      id: `${Date.now()}`, name, query: aiQuery, databaseType,
+      propertySearchText, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode,
+      minPrice, maxPrice, minUnits, maxUnits, selectedDate,
+    };
+    persistSavedSearches([s, ...savedSearches].slice(0, 20));
+  };
+  const applySavedSearch = (s: SavedSearch) => {
+    setSavedSearchOpen(false);
+    setDatabaseType(s.databaseType);
+    setPropertySearchText(s.propertySearchText);
+    setSelectedCity(s.selectedCity);
+    setSelectedCounties(s.selectedCounties);
+    setSelectedMarketArea(s.selectedMarketArea);
+    setSelectedZipcode(s.selectedZipcode);
+    setMinPrice(s.minPrice);
+    setMaxPrice(s.maxPrice);
+    setMinUnits(s.minUnits);
+    setMaxUnits(s.maxUnits);
+    setSelectedDate(s.selectedDate);
+    setActiveView('search');
+    if (s.query) { setAiQuery(s.query); setTimeout(() => handleAiSearch(), 0); }
+  };
+  const deleteSavedSearch = (id: string) => {
+    persistSavedSearches(savedSearches.filter((s) => s.id !== id));
+  };
 
   const formatCurrency = (value: string) => {
     if (!value) return '';
@@ -1023,109 +1098,6 @@ function UserDashboard() {
       .join(' ');
   };
 
-  // Every party on the record with its rep, phone and mailing address, from the source's
-  // prefixed columns (O = owner, S = seller, B = broker, L = lender, C L = construction lender…).
-  const buildContacts = (property: Property) => {
-    const get = (col: string) => getReportValue(property, col);
-    const getAny = (...cols: string[]) => getReportValueAny(property, ...cols);
-    const address = (prefix: string) => {
-      const street = titleCase(`${get(`${prefix} STREET NUMBER`)} ${get(`${prefix} STREET NAME`)}`.trim());
-      const suite = get(`${prefix} SUITE NUMBER`);
-      const box = get(`${prefix} P O BOX NUMBER`);
-      const cityLine = [titleCase(get(`${prefix} CITY`)), [get(`${prefix} STATE`), get(`${prefix} ZIP`)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-      return [street, suite && `Suite ${suite}`, box && `P.O. Box ${box}`, cityLine].filter(Boolean).join(', ');
-    };
-    const party = (label: string, name: string, prefix: string, phones: string[], reps: string[] = [`${prefix} REP`, `${prefix} REP2`]) => {
-      if (!name) return [];
-      return [
-        { label, value: titleCase(name) },
-        { label: `${label} Contact`, value: [titleCase(reps.map(get).filter(Boolean).join(' / ')), getAny(...phones)].filter(Boolean).join(' · ') },
-        { label: `${label} Address`, value: address(prefix) },
-      ];
-    };
-    return [
-      ...party('Owner', get('OWNER') || get('TAX OWNER'), 'O', ['O PHONE', 'O PHONE2\\FAX', 'O PHONE2 FAX']),
-      ...party('2nd Owner', get('2ND OWNER'), '2ND OWNER', ['2ND OWNER PHONE']),
-      ...party('Seller', getAny('SELLER\\FORECLOSEE', 'SELLER'), 'S', ['S PHONE']),
-      ...party('Broker', get('BROKER'), 'B', ['BROKER PHONE', 'B PHONE']),
-      ...(get('BUILDER') ? [{ label: 'Builder', value: titleCase(get('BUILDER')) }] : []),
-      ...party('Lender', get('LENDER'), 'L', ['L PHONE']),
-      ...party('Construction Lender', get('C LENDER'), 'C L', ['C L PHONE']),
-      ...party('Leasing', getAny('LEASING COMPANY', 'LEASING REP'), 'LEASING', ['LEASING PHONE']),
-      ...party('Management', get('MANAGEMENT COMPANY'), 'MANAGEMENT', ['MANAGEMENT PHONE']),
-      ...(get('ATTORNEY') ? [{ label: 'Attorney', value: [titleCase(get('ATTORNEY')), get('ATTORNEY PHONE')].filter(Boolean).join(' · ') }] : []),
-      ...(get('ONSITE PHONE') ? [{ label: 'Onsite Telephone', value: get('ONSITE PHONE') }] : []),
-    ].filter((f) => f.value);
-  };
-
-  // Every non-empty column of the record, in the source file's order: nothing is left out of the card.
-  const allFields = (property: Property) =>
-    excelHeaders
-      .map((h: string, i: number) => ({ label: String(h || '').trim(), value: property.raw?.[i] }))
-      .filter((f) => f.label && f.value !== undefined && f.value !== null && String(f.value).trim() !== '')
-      .map((f) => ({ label: f.label, value: f.label.includes('DATE') ? formatExcelDate(f.value) : String(f.value).trim() }));
-
-  const buildReportSections = (property: Property) => {
-    const get = (col: string) => getReportValue(property, col);
-    const getAny = (...cols: string[]) => getReportValueAny(property, ...cols);
-    return [
-      {
-        title: 'Property Profile',
-        fields: [
-          { label: 'Property Name', value: titleCase(get('P NAME')) },
-          { label: 'Address', value: titleCase(`${get('P STREET NUMBER')} ${get('P STREET NAME')}`.trim()) },
-          { label: 'City', value: titleCase(get('P CITY')) },
-          { label: 'County', value: titleCase(get('COUNTY')) },
-          { label: 'Market Area', value: get('MARKET AREA') },
-          { label: 'Zip', value: get('P ZIP') },
-          { label: 'District', value: get('DISTRICT2') },
-          { label: 'Cross Road', value: titleCase(get('P CROSS STREET NAME')) },
-          { label: 'Parcel', value: get('PARCEL') },
-        ],
-      },
-      {
-        title: 'Property Details',
-        fields: [
-          { label: 'Insider Date', value: get('INSIDER DATE') },
-          { label: 'Previous Insider Date 1', value: get('PREVIOUS INSIDER DATE 1') },
-          { label: 'Previous Insider Date 2', value: get('PREVIOUS INSIDER DATE 2') },
-          { label: 'Previous Insider Date 3', value: get('PREVIOUS INSIDER DATE 3') },
-          { label: 'Insider Description', value: titleCase(getAny('P TYPE', 'PROJECT TYPE')) },
-          { label: isIndustrial ? 'Sq Ft / $ SF' : 'Units / $ Unit', value: [formatUnits(getAny('UNITS COMPLETED', '# SQ FT BUILT')), formatPerUnit(property.pricePerUnit) || formatPerUnit(getAny('$ UNIT PROJECT', 'PRICE PER SF BUILDING'))].filter(Boolean).join(' / ') },
-          { label: 'Tax Owner', value: titleCase(get('TAX OWNER')) },
-          { label: 'Owner (Buyer)', value: titleCase(get('OWNER')) },
-          { label: 'Seller', value: titleCase(getAny('SELLER\\FORECLOSEE', 'SELLER')) },
-          { label: 'Onsite Telephone', value: get('ONSITE PHONE') },
-          { label: 'Acres / $ Per Acre', value: [get('# ACRES'), formatCurrency(getAny('$ ACRE', 'PRICE PER ACRE'))].filter(Boolean).join(' / ') },
-          ...(isIndustrial ? [] : [{ label: 'Square Ft', value: formatUnits(get('HEATED SF')) }]),
-          { label: 'Loan Amount', value: formatCurrency(getAny('$ LOAN', 'PERMANENT LOAN')) },
-          { label: 'Attorney Name', value: titleCase(get('ATTORNEY')) },
-          { label: 'Attorney Telephone', value: get('ATTORNEY PHONE') },
-        ],
-      },
-      {
-        title: 'Contacts',
-        fields: buildContacts(property),
-      },
-      {
-        title: 'Financial Highlights',
-        fields: [
-          { label: 'Property Sale Amount', value: formatCurrency(get('SALE PRICE')) },
-          { label: 'Property Sale Date', value: get('SALE DATE') },
-          { label: 'Land Sale Amount', value: formatCurrency(get('LAND SALE PRICE')) },
-          { label: 'Land Sale Date', value: get('LAND SALE DATE') },
-          { label: 'Equity', value: formatCurrency(getAny('$ EQUITY', 'EQUITY')) },
-          { label: 'Down Payment', value: formatCurrency(getAny('$ DOWNPAYMENT', 'DOWNPAYMENT')) },
-          { label: 'Purchase Note', value: formatCurrency(getAny('$ PURCHASE NOTE', 'PURCHASE NOTE')) },
-          { label: 'Utility', value: get('UTILITIES') },
-          { label: 'Application Fee', value: formatCurrency(get('APPLICATION FEE')) },
-          { label: 'Refund Amount', value: formatCurrency(get('REFUND')) },
-          { label: 'Monthly Income', value: formatCurrency(get('MONTHLY INCOME')) },
-          { label: 'Yearly Income', value: formatCurrency(get('YEARLY INCOME')) },
-        ],
-      },
-    ];
-  };
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -1139,19 +1111,19 @@ function UserDashboard() {
   };
 
   return (
-    <div>
+    <div className="font-sans text-db-text">
       <div className="flex flex-col">
         {/* Database Type Selector */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-          <div className="inline-flex flex-wrap justify-center rounded-xl bg-white shadow-md p-1 gap-1">
+          <div className="inline-flex flex-wrap justify-center rounded-xl bg-white border border-db-border p-1 gap-1">
             {DATABASE_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 onClick={() => { setDatabaseType(option.value); setHistoryDb(null); }}
                 className={`px-4 py-3 rounded-lg font-semibold transition-all ${
                   databaseType === option.value
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-gray-600 hover:text-gray-900'
+                    ? 'bg-db-navy text-white'
+                    : 'text-db-subtle hover:text-db-ink'
                 }`}
               >
                 {option.label}
@@ -1162,10 +1134,10 @@ function UserDashboard() {
             <button
               onClick={() => { setActiveView('search'); clearPropertyFilters(); setSelectedDate(newThisWeek.date); }}
               title="Show only the properties in the latest Insider Report"
-              className="flex items-center gap-2 px-4 py-2 rounded-full bg-white shadow-md text-sm text-gray-700 hover:bg-gray-50"
+              className="flex items-center gap-2 px-4 py-2 rounded-full bg-white border border-db-border text-sm text-db-subtle hover:bg-db-cream"
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="font-semibold text-gray-900">{newThisWeek.count.toLocaleString()} new</span> in the {newThisWeek.date} Insider Report
+              <span className="w-2 h-2 rounded-full bg-db-green" />
+              <span className="font-semibold text-db-ink num">{newThisWeek.count.toLocaleString()} new</span> in the {newThisWeek.date} Insider Report
             </button>
           )}
         </div>
@@ -1176,8 +1148,8 @@ function UserDashboard() {
             onClick={() => setActiveView('search')}
             className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'search'
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
-                : 'bg-white text-gray-600 hover:bg-gray-50'
+                ? 'bg-db-navy text-white'
+                : 'bg-white border border-db-border text-db-subtle hover:bg-db-cream'
             }`}
           >
             <Search className="w-5 h-5" />
@@ -1187,8 +1159,8 @@ function UserDashboard() {
             onClick={() => { setHistoryDb(null); setActiveView('history'); }}
             className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'history'
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
-                : 'bg-white text-gray-600 hover:bg-gray-50'
+                ? 'bg-db-navy text-white'
+                : 'bg-white border border-db-border text-db-subtle hover:bg-db-cream'
             }`}
           >
             <History className="w-5 h-5" />
@@ -1198,8 +1170,8 @@ function UserDashboard() {
             onClick={() => setActiveView('dashboard')}
             className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'dashboard'
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
-                : 'bg-white text-gray-600 hover:bg-gray-50'
+                ? 'bg-db-navy text-white'
+                : 'bg-white border border-db-border text-db-subtle hover:bg-db-cream'
             }`}
           >
             <BarChart3 className="w-5 h-5" />
@@ -1209,8 +1181,8 @@ function UserDashboard() {
             onClick={() => setActiveView('reports')}
             className={`flex-1 basis-[calc(50%-0.375rem)] sm:basis-0 py-3 sm:py-4 px-4 sm:px-6 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
               activeView === 'reports'
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
-                : 'bg-white text-gray-600 hover:bg-gray-50'
+                ? 'bg-db-navy text-white'
+                : 'bg-white border border-db-border text-db-subtle hover:bg-db-cream'
             }`}
           >
             <FileText className="w-5 h-5" />
@@ -1222,7 +1194,7 @@ function UserDashboard() {
         {activeView === 'dashboard' && properties.length > 0 && recentInsiderStats.propertyCount > 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
             <div className="flex items-center gap-3 mb-4">
-              <BarChart3 className="w-6 h-6 text-indigo-600" />
+              <BarChart3 className="w-6 h-6 text-db-navy" />
               <div className="text-left">
                 <h3 className="text-lg font-bold text-gray-800">Recent Insider Activity</h3>
                 <p className="text-sm text-gray-500">
@@ -1234,7 +1206,7 @@ function UserDashboard() {
               <button
                 onClick={downloadSnapshot}
                 disabled={snapshotting}
-                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-db-navy text-white text-sm hover:bg-db-navyLight disabled:opacity-50"
                 title="One-page PDF of these numbers"
               >
                 {snapshotting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
@@ -1244,8 +1216,8 @@ function UserDashboard() {
             <div className="space-y-6">
                 {/* Stat Tiles */}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                  <div className="bg-blue-50 rounded-xl p-4">
-                    <div className="flex items-center gap-2 text-blue-600 mb-1">
+                  <div className="bg-db-tint rounded-xl p-4">
+                    <div className="flex items-center gap-2 text-db-navy mb-1">
                       <Building2 className="w-4 h-4" />
                       <span className="text-xs font-semibold uppercase tracking-wide">Properties</span>
                     </div>
@@ -1272,8 +1244,8 @@ function UserDashboard() {
                     </div>
                     <p className="text-2xl font-bold text-gray-900">{formatCompactCurrency(recentInsiderStats.medianPrice)}</p>
                   </div>
-                  <div className="bg-purple-50 rounded-xl p-4">
-                    <div className="flex items-center gap-2 text-purple-600 mb-1">
+                  <div className="bg-db-tint rounded-xl p-4">
+                    <div className="flex items-center gap-2 text-db-gold mb-1">
                       <TrendingUp className="w-4 h-4" />
                       <span className="text-xs font-semibold uppercase tracking-wide">Top Sale</span>
                     </div>
@@ -1294,7 +1266,7 @@ function UserDashboard() {
                   {recentInsiderStats.topCounties.length > 0 && (
                     <div>
                       <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-indigo-500" />
+                        <MapPin className="w-4 h-4 text-db-navy" />
                         Top Counties
                       </h4>
                       <div className="space-y-2">
@@ -1306,7 +1278,7 @@ function UserDashboard() {
                           >
                             <span className="font-medium text-gray-700">{county}</span>
                             <span className="text-sm text-gray-500">
-                              <span className="font-semibold text-indigo-600">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
+                              <span className="font-semibold text-db-navy">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
                               {volume > 0 && <span className="ml-2 text-green-600 font-semibold">{formatCompactCurrency(volume)}</span>}
                             </span>
                           </div>
@@ -1319,7 +1291,7 @@ function UserDashboard() {
                   {recentInsiderStats.topCities.length > 0 && (
                     <div>
                       <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
-                        <Building2 className="w-4 h-4 text-indigo-500" />
+                        <Building2 className="w-4 h-4 text-db-navy" />
                         Top Cities
                       </h4>
                       <div className="space-y-2">
@@ -1331,7 +1303,7 @@ function UserDashboard() {
                           >
                             <span className="font-medium text-gray-700">{city}</span>
                             <span className="text-sm text-gray-500">
-                              <span className="font-semibold text-indigo-600">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
+                              <span className="font-semibold text-db-navy">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
                             </span>
                           </div>
                         ))}
@@ -1371,7 +1343,7 @@ function UserDashboard() {
         {properties.length > 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
             <div className="flex items-center gap-3 mb-4">
-              <Building2 className="w-6 h-6 text-indigo-600" />
+              <Building2 className="w-6 h-6 text-db-navy" />
               <div>
                 <h3 className="text-lg font-bold text-gray-800">Top Owners</h3>
                 <p className="text-sm text-gray-500">
@@ -1384,7 +1356,7 @@ function UserDashboard() {
               <p className="text-sm text-gray-500">
                 No sales with owner information in the last 3 years{filteredProperties.length !== properties.length ? ' within the current search filters' : ''}.
                 {filteredProperties.length !== properties.length && (
-                  <button onClick={clearPropertyFilters} className="ml-2 text-blue-600 hover:underline">Clear filters</button>
+                  <button onClick={clearPropertyFilters} className="ml-2 text-db-navy hover:underline">Clear filters</button>
                 )}
               </p>
             ) : (
@@ -1398,7 +1370,7 @@ function UserDashboard() {
                   >
                     <span className="font-medium text-gray-700 truncate mr-4">{owner}</span>
                     <span className="text-sm text-gray-500 flex-shrink-0">
-                      <span className="font-semibold text-indigo-600">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
+                      <span className="font-semibold text-db-navy">{count}</span> propert{count !== 1 ? 'ies' : 'y'}
                       {units > 0 && <span className="ml-2 text-gray-600">{units.toLocaleString()} {unitLabel.toLowerCase()}</span>}
                       {volume > 0 && <span className="ml-2 text-green-600 font-semibold">{formatCompactCurrency(volume)}</span>}
                     </span>
@@ -1415,7 +1387,7 @@ function UserDashboard() {
             {/* County Breakdown */}
             <div className="bg-white rounded-2xl shadow-lg p-6">
               <div className="flex items-center gap-3 mb-4">
-                <MapPin className="w-6 h-6 text-blue-600" />
+                <MapPin className="w-6 h-6 text-db-navy" />
                 <h3 className="text-lg font-bold text-gray-800">Top Counties</h3>
               </div>
               <div className="space-y-2">
@@ -1436,7 +1408,7 @@ function UserDashboard() {
                         onClick={() => drillDown(() => setSelectedCounties([county]))}
                       >
                         <span className="font-medium text-gray-700">{county}</span>
-                        <span className="text-sm font-semibold text-blue-600">{count.toLocaleString()} properties</span>
+                        <span className="text-sm font-semibold text-db-navy">{count.toLocaleString()} properties</span>
                       </div>
                     ));
                 })()}
@@ -1480,7 +1452,7 @@ function UserDashboard() {
         {properties.length > 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
             <div className="flex items-center gap-3 mb-4">
-              <Calendar className="w-6 h-6 text-indigo-600" />
+              <Calendar className="w-6 h-6 text-db-navy" />
               <div className="text-left">
                 <h3 className="text-lg font-bold text-gray-800">Latest Insider Dates</h3>
                 {latestUploadName && (
@@ -1517,7 +1489,7 @@ function UserDashboard() {
                         }}
                       >
                         <span className="font-medium text-gray-700">{date}</span>
-                        <span className="text-sm font-semibold text-indigo-600">{count.toLocaleString()} properties</span>
+                        <span className="text-sm font-semibold text-db-navy">{count.toLocaleString()} properties</span>
                       </div>
                     ));
                 })()}
@@ -1539,7 +1511,7 @@ function UserDashboard() {
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
                   placeholder="Search reports by name, date, or source file..."
-                  className="w-full pl-12 pr-4 py-4 bg-white border-2 border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm"
+                  className="w-full pl-12 pr-4 py-4 bg-white border-2 border-gray-200 rounded-2xl focus:ring-2 focus:ring-db-navy focus:border-db-navy text-lg shadow-sm"
                 />
               </div>
             </div>
@@ -1555,7 +1527,7 @@ function UserDashboard() {
 
           {loading ? (
             <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
+              <Loader2 className="w-10 h-10 animate-spin text-db-navy" />
             </div>
           ) : filteredReports.length === 0 ? (
             <div className="text-center py-16">
@@ -1572,12 +1544,12 @@ function UserDashboard() {
               {filteredReports.map((report) => (
                 <div
                   key={report.id}
-                  className="group border-2 border-gray-200 rounded-xl p-6 hover:border-blue-400 hover:shadow-lg transition-all duration-200"
+                  className="group border-2 border-gray-200 rounded-xl p-6 hover:border-db-borderStrong hover:shadow-lg transition-all duration-200"
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap mb-2">
-                        <h3 className="text-xl font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
+                        <h3 className="text-xl font-bold text-gray-900 group-hover:text-db-navy transition-colors">
                           {report.report_name}
                         </h3>
                         {report.is_latest === 0 && (
@@ -1600,7 +1572,7 @@ function UserDashboard() {
                         </div>
                         {report.selected_dates.length > 0 && (
                           <div className="flex items-center gap-2">
-                            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                            <span className="px-3 py-1 bg-db-tint text-db-navyLight rounded-full text-xs font-medium">
                               {report.selected_dates.join(', ')}
                             </span>
                           </div>
@@ -1610,7 +1582,7 @@ function UserDashboard() {
                     <div className="ml-6">
                       <button
                         onClick={() => window.open(`${API_URL}/api/reports/${report.id}/view`, '_blank')}
-                        className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 flex items-center gap-2 font-semibold shadow-md hover:shadow-lg"
+                        className="px-6 py-3 bg-db-navy text-white rounded-xl hover:bg-db-navyLight transition-all duration-200 flex items-center gap-2 font-semibold shadow-md hover:shadow-lg"
                       >
                         <Eye className="w-5 h-5" />
                         View Report
@@ -1626,9 +1598,9 @@ function UserDashboard() {
         ) : activeView === 'search' ? (
           <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6">
             {/* AI Natural Language Search */}
-            <div className="mb-5 p-4 sm:p-5 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl">
+            <div className="mb-5 p-4 sm:p-5 bg-db-tint border border-db-border rounded-xl">
               <div className="flex items-baseline gap-2 mb-3">
-                <Sparkles className="w-6 h-6 text-indigo-600 self-center" />
+                <Sparkles className="w-6 h-6 text-db-navy self-center" />
                 <h2 className="text-xl font-bold text-gray-800 whitespace-nowrap">Ask AI</h2>
                 <span className="text-sm text-gray-500">Type a question about this week's list or the whole archive</span>
               </div>
@@ -1639,7 +1611,7 @@ function UserDashboard() {
                   onChange={(e) => setAiQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleAiSearch()}
                   placeholder='e.g. "who owned 1000 Belmont before?", "everything Novare sold", "apartments in Cobb under $150k per unit"'
-                  className="flex-1 min-w-0 px-4 py-3 text-lg bg-white border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="flex-1 min-w-0 px-4 py-3 text-lg bg-white border border-db-border rounded-lg focus:ring-2 focus:ring-db-navy focus:border-db-navy"
                   disabled={aiLoading}
                 />
                 <button
@@ -1648,7 +1620,7 @@ function UserDashboard() {
                   className={`px-6 py-3 rounded-lg font-semibold text-white transition-all flex items-center justify-center gap-2 ${
                     aiLoading || !aiQuery.trim()
                       ? 'bg-gray-300 cursor-not-allowed'
-                      : 'bg-indigo-600 hover:bg-indigo-700 shadow-md'
+                      : 'bg-db-navy hover:bg-db-navyLight shadow-md'
                   }`}
                 >
                   {aiLoading ? (
@@ -1665,7 +1637,7 @@ function UserDashboard() {
                 </button>
               </div>
               {aiExplanation && (
-                <div className="mt-3 flex items-start gap-2 text-sm text-indigo-800 bg-indigo-100/60 rounded-lg px-3 py-2">
+                <div className="mt-3 flex items-start gap-2 text-sm text-db-navy bg-db-tint/60 rounded-lg px-3 py-2">
                   <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <span>{aiExplanation}</span>
                 </div>
@@ -1679,12 +1651,12 @@ function UserDashboard() {
               {(saleDateAfter || saleDateBefore || insiderDateAfter || insiderDateBefore) && (
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
                   {(saleDateAfter || saleDateBefore) && (
-                    <span className="bg-white border border-indigo-200 text-indigo-700 px-3 py-1 rounded-full font-medium">
+                    <span className="bg-white border border-db-border text-db-navyLight px-3 py-1 rounded-full font-medium">
                       Sale date: {saleDateAfter || '...'} → {saleDateBefore || 'today'}
                     </span>
                   )}
                   {(insiderDateAfter || insiderDateBefore) && (
-                    <span className="bg-white border border-indigo-200 text-indigo-700 px-3 py-1 rounded-full font-medium">
+                    <span className="bg-white border border-db-border text-db-navyLight px-3 py-1 rounded-full font-medium">
                       Insider date: {insiderDateAfter || '...'} → {insiderDateBefore || 'today'}
                     </span>
                   )}
@@ -1693,10 +1665,10 @@ function UserDashboard() {
               {(Object.keys(aiFields).length > 0 || Object.keys(aiRanges).length > 0) && (
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
                   {Object.entries(aiFields).map(([k, v]) => (
-                    <span key={k} className="bg-white border border-indigo-200 text-indigo-700 px-3 py-1 rounded-full font-medium">{v === '*' ? `has ${k}` : `${k} contains “${v}”`}</span>
+                    <span key={k} className="bg-white border border-db-border text-db-navyLight px-3 py-1 rounded-full font-medium">{v === '*' ? `has ${k}` : `${k} contains “${v}”`}</span>
                   ))}
                   {Object.entries(aiRanges).map(([k, r]) => (
-                    <span key={k} className="bg-white border border-indigo-200 text-indigo-700 px-3 py-1 rounded-full font-medium">
+                    <span key={k} className="bg-white border border-db-border text-db-navyLight px-3 py-1 rounded-full font-medium">
                       {k}: {r.min != null ? `≥ ${r.min.toLocaleString()}` : ''}{r.min != null && r.max != null ? ' and ' : ''}{r.max != null ? `≤ ${r.max.toLocaleString()}` : ''}
                     </span>
                   ))}
@@ -1710,7 +1682,7 @@ function UserDashboard() {
             {aiHistory && !browseWithAnswer ? (
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
                 <span>The answer above comes from the archive of every weekly file. This week's full list of {properties.length.toLocaleString()} properties is hidden so it isn't mistaken for part of the answer.</span>
-                <button onClick={() => setBrowseWithAnswer(true)} className="text-blue-600 hover:underline font-medium whitespace-nowrap">Browse this week's list</button>
+                <button onClick={() => setBrowseWithAnswer(true)} className="text-db-navy hover:underline font-medium whitespace-nowrap">Browse this week's list</button>
               </div>
             ) : (
             <>
@@ -1723,12 +1695,12 @@ function UserDashboard() {
                   value={propertySearchText}
                   onChange={(e) => setPropertySearchText(e.target.value)}
                   placeholder="Quick find: name, old name, city, address, owner…"
-                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy focus:border-db-navy"
                 />
               </div>
               <button
                 onClick={() => setShowFilters(v => !v)}
-                className={`px-3 py-2.5 rounded-lg border text-sm font-medium flex items-center gap-1.5 ${showFilters || activeFilterCount > 0 ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                className={`px-3 py-2.5 rounded-lg border text-sm font-medium flex items-center gap-1.5 ${showFilters || activeFilterCount > 0 ? 'border-db-borderStrong bg-db-tint text-db-navyLight' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
               >
                 <SlidersHorizontal className="w-4 h-4" />
                 Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
@@ -1743,6 +1715,53 @@ function UserDashboard() {
                 {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 Excel
               </button>
+              <div className="relative">
+                <button
+                  onClick={() => setColPickerOpen((v) => !v)}
+                  className="px-3 py-2.5 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium flex items-center gap-1.5 hover:bg-gray-50"
+                >
+                  Columns{hiddenCols.size > 0 ? ` (${tableColumns.length - hiddenCols.size})` : ''}
+                  {colPickerOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+                {colPickerOpen && (
+                  <div className="absolute right-0 z-20 mt-1 w-56 bg-white border border-db-border rounded-lg shadow-lg p-2" onMouseLeave={() => setColPickerOpen(false)}>
+                    {tableColumns.map(([key, label]) => (
+                      <label key={key} className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-db-cream ${key === 'propertyName' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                        <input type="checkbox" checked={key === 'propertyName' || colVisible(key)} disabled={key === 'propertyName'} onChange={() => toggleCol(key)} />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={saveCurrentSearch}
+                title="Save this search to come back to later"
+                className="px-3 py-2.5 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium flex items-center gap-1.5 hover:bg-gray-50"
+              >
+                Save search
+              </button>
+              {savedSearches.length > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setSavedSearchOpen((v) => !v)}
+                    className="px-3 py-2.5 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium flex items-center gap-1.5 hover:bg-gray-50"
+                  >
+                    Saved ({savedSearches.length})
+                    {savedSearchOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                  {savedSearchOpen && (
+                    <div className="absolute right-0 z-20 mt-1 w-64 bg-white border border-db-border rounded-lg shadow-lg p-1 max-h-72 overflow-y-auto" onMouseLeave={() => setSavedSearchOpen(false)}>
+                      {savedSearches.map((s) => (
+                        <div key={s.id} className="flex items-center gap-1 px-2 py-1.5 rounded hover:bg-db-cream group">
+                          <button onClick={() => applySavedSearch(s)} className="flex-1 text-left text-sm text-db-text truncate" title={s.query}>{s.name}</button>
+                          <button onClick={() => deleteSavedSearch(s.id)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600" title="Delete"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Filters */}
@@ -1752,7 +1771,7 @@ function UserDashboard() {
                 <select
                   value={selectedCity}
                   onChange={(e) => setSelectedCity(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 >
                   <option value="">All Cities</option>
                   {filters.cities.map(city => (
@@ -1764,7 +1783,7 @@ function UserDashboard() {
                   <button
                     onClick={() => setCountyDropdownOpen(!countyDropdownOpen)}
                     className={`w-full px-3 py-2 border rounded-lg text-sm text-left flex items-center justify-between gap-2 bg-white ${
-                      selectedCounties.length > 0 ? 'border-blue-400 text-blue-700 font-medium' : 'border-gray-300 text-gray-700'
+                      selectedCounties.length > 0 ? 'border-db-borderStrong text-db-navyLight font-medium' : 'border-gray-300 text-gray-700'
                     }`}
                   >
                     <span className="truncate">
@@ -1783,7 +1802,7 @@ function UserDashboard() {
                         {selectedCounties.length > 0 && (
                           <button
                             onClick={() => setSelectedCounties([])}
-                            className="w-full text-left px-2 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded font-medium"
+                            className="w-full text-left px-2 py-1.5 text-sm text-db-navy hover:bg-db-tint rounded font-medium"
                           >
                             Clear selection
                           </button>
@@ -1803,7 +1822,7 @@ function UserDashboard() {
                                     : [...prev, county]
                                 )
                               }
-                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                              className="w-4 h-4 text-db-navy rounded focus:ring-db-navy"
                             />
                             <span className="text-gray-700">{county}</span>
                           </label>
@@ -1816,7 +1835,7 @@ function UserDashboard() {
                 <select
                   value={selectedMarketArea}
                   onChange={(e) => setSelectedMarketArea(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 >
                   <option value="">All Market Areas</option>
                   {filters.marketAreas.map(area => (
@@ -1827,7 +1846,7 @@ function UserDashboard() {
                 <select
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 >
                   <option value="">All Dates</option>
                   {filters.dates.map(date => (
@@ -1843,35 +1862,35 @@ function UserDashboard() {
                 value={ownerFilter}
                 onChange={(e) => setOwnerFilter(e.target.value)}
                 placeholder="Owner (buyer) name..."
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
               />
               <input
                 type="text"
                 value={selectedSeller}
                 onChange={(e) => setSelectedSeller(e.target.value)}
                 placeholder="Seller name..."
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
               />
               <input
                 type="text"
                 value={entityFilter}
                 onChange={(e) => setEntityFilter(e.target.value)}
                 placeholder="Owner or seller (history)..."
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
               />
               <input
                 type="text"
                 value={streetFilter}
                 onChange={(e) => setStreetFilter(e.target.value)}
                 placeholder="Street name..."
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
               />
               <input
                 type="text"
                 value={selectedZipcode}
                 onChange={(e) => setSelectedZipcode(e.target.value)}
                 placeholder="Zip codes, e.g. 30305, 30309"
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
               />
             </div>
 
@@ -1883,7 +1902,7 @@ function UserDashboard() {
                   value={minPrice}
                   onChange={(e) => setMinPrice(e.target.value)}
                   placeholder="Min Price"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
                 <span className="text-gray-500">-</span>
                 <input
@@ -1891,7 +1910,7 @@ function UserDashboard() {
                   value={maxPrice}
                   onChange={(e) => setMaxPrice(e.target.value)}
                   placeholder="Max Price"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
               </div>
               {!isLand && (<>
@@ -1901,7 +1920,7 @@ function UserDashboard() {
                   value={minPricePerUnit}
                   onChange={(e) => setMinPricePerUnit(e.target.value)}
                   placeholder={isIndustrial ? 'Min $/SF' : 'Min $/Unit'}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
                 <span className="text-gray-500">-</span>
                 <input
@@ -1909,7 +1928,7 @@ function UserDashboard() {
                   value={maxPricePerUnit}
                   onChange={(e) => setMaxPricePerUnit(e.target.value)}
                   placeholder={isIndustrial ? 'Max $/SF' : 'Max $/Unit'}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
               </div>
               <div className="flex gap-2 items-center">
@@ -1918,7 +1937,7 @@ function UserDashboard() {
                   value={minUnits}
                   onChange={(e) => setMinUnits(e.target.value)}
                   placeholder={`Min ${unitLabel}`}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
                 <span className="text-gray-500">-</span>
                 <input
@@ -1926,7 +1945,7 @@ function UserDashboard() {
                   value={maxUnits}
                   onChange={(e) => setMaxUnits(e.target.value)}
                   placeholder={`Max ${unitLabel}`}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
               </div>
               </>)}
@@ -1935,6 +1954,28 @@ function UserDashboard() {
             )}
 
             {/* Results */}
+            {filteredProperties.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <div className="bg-white border border-db-border rounded-xl px-4 py-3">
+                  <div className="text-xs text-db-muted">Total volume</div>
+                  <div className="text-xl font-semibold text-db-ink num">{resultStats.volume >= 1e9 ? `$${(resultStats.volume / 1e9).toFixed(2)}B` : resultStats.volume >= 1e6 ? `$${(resultStats.volume / 1e6).toFixed(1)}M` : resultStats.volume > 0 ? `$${Math.round(resultStats.volume).toLocaleString()}` : '—'}</div>
+                </div>
+                <div className="bg-white border border-db-border rounded-xl px-4 py-3">
+                  <div className="text-xs text-db-muted">Total {unitLabel}</div>
+                  <div className="text-xl font-semibold text-db-ink num">{resultStats.unitTotal > 0 ? resultStats.unitTotal.toLocaleString() : '—'}</div>
+                </div>
+                <div className="bg-white border border-db-border rounded-xl px-4 py-3">
+                  <div className="text-xs text-db-muted">Median $/{unitLabel.replace(/s$/, '')}</div>
+                  <div className="text-xl font-semibold text-db-ink num">{resultStats.median > 0 ? `$${Math.round(resultStats.median).toLocaleString()}` : '—'}</div>
+                </div>
+                <div className="bg-white border border-db-border rounded-xl px-4 py-3">
+                  <div className="text-xs text-db-muted">Largest sale</div>
+                  <div className="text-xl font-semibold text-db-ink num truncate" title={resultStats.biggest ? primaryName(resultStats.biggest.propertyName) : ''}>
+                    {resultStats.biggest ? `$${Math.round(Number(resultStats.biggest.salePrice)).toLocaleString()}` : '—'}
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm text-gray-600">
                 Showing <span className="font-semibold">{filteredProperties.length.toLocaleString()}</span> of <span className="font-semibold">{properties.length.toLocaleString()}</span> properties
@@ -1943,7 +1984,7 @@ function UserDashboard() {
               {(activeFilterCount > 0 || propertySearchText) && (
                 <button
                   onClick={clearPropertyFilters}
-                  className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                  className="text-sm text-db-navy hover:text-db-navyLight font-medium flex items-center gap-1"
                 >
                   <X className="w-4 h-4" />
                   Clear Filters
@@ -1951,17 +1992,42 @@ function UserDashboard() {
               )}
             </div>
 
-            {/* Property List */}
-            <div className="overflow-x-auto">
+            {/* Property List — cards on narrow screens instead of a wide table that just
+                scrolls sideways (the Sep 24 audit specifically flagged a 1,100px table on a
+                375px phone screen). */}
+            <div className="sm:hidden space-y-2">
+              {filteredProperties.slice(0, visibleRows).map((property, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => openReportFor(property, 'report')}
+                  className="w-full text-left bg-white border border-db-border rounded-xl p-4 flex flex-col gap-1"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-db-ink truncate">{primaryName(property.propertyName)}</div>
+                      <div className="text-xs text-db-muted truncate">{titleCase(property.city)}{property.county ? `, ${titleCase(property.county)}` : ''}</div>
+                    </div>
+                    {property.saleDate && <span className="text-xs text-db-muted whitespace-nowrap num">{property.saleDate}</span>}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-sm num">
+                    {property.salePrice && <span className="font-semibold text-db-ink">{formatCurrency(property.salePrice)}</span>}
+                    {!isLand && property.units && <span className="text-db-muted">{formatUnits(property.units)} {unitLabel.toLowerCase()}</span>}
+                    {isLand && property.acres && <span className="text-db-muted">{property.acres} ac</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-50 sticky top-0">
+                <thead className="bg-db-cream sticky top-0 border-b border-db-border">
                   <tr>
-                    {tableColumns.map(([key, label]) => (
+                    {tableColumns.filter(([key]) => key === 'propertyName' || colVisible(key)).map(([key, label]) => (
                       <th
                         key={key}
                         onClick={() => toggleSort(key)}
                         title="Click to sort"
-                        className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap hover:text-gray-900 ${sort?.key === key ? 'text-indigo-700' : 'text-gray-600'}`}
+                        className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap hover:text-gray-900 ${NUMERIC_SORT.includes(key) || DATE_SORT.includes(key) ? 'text-right' : 'text-left'} ${sort?.key === key ? 'text-db-navyLight' : 'text-gray-600'}`}
                       >
                         {label}{sortMark(key)}
                       </th>
@@ -1969,10 +2035,10 @@ function UserDashboard() {
                     <th className="px-4 py-3"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className="divide-y divide-db-border">
                   {filteredProperties.slice(0, visibleRows).map((property, idx) => (
                     <>
-                      <tr key={idx} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedProperty(property)}>
+                      <tr key={idx} className="hover:bg-gray-50 cursor-pointer" onClick={() => openReportFor(property, 'report')}>
                         <td className="px-4 py-3 text-sm font-medium text-gray-900 max-w-[280px]" title={titleCase(property.propertyName)}>
                           <div className="truncate">
                             {primaryName(property.propertyName)}
@@ -1985,20 +2051,20 @@ function UserDashboard() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{titleCase(property.city)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{titleCase(property.county)}</td>
-                        {!isLand && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatUnits(property.units)}</td>}
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatCurrency(property.salePrice)}</td>
+                        {colVisible('county') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{titleCase(property.county)}</td>}
+                        {!isLand && colVisible('units') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap text-right num">{formatUnits(property.units)}</td>}
+                        <td className="px-4 py-3 text-sm text-db-ink font-semibold whitespace-nowrap text-right num">{formatCurrency(property.salePrice)}</td>
                         {isLand
-                          ? <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.acres}</td>
-                          : <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatPerUnit(property.pricePerUnit)}</td>}
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.saleDate}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{property.insiderDate}</td>
+                          ? colVisible('acres') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap text-right num">{property.acres}</td>
+                          : colVisible('pricePerUnit') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap text-right num">{formatPerUnit(property.pricePerUnit)}</td>}
+                        {colVisible('saleDate') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap num">{property.saleDate}</td>}
+                        {colVisible('insiderDate') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap num">{property.insiderDate}</td>}
                         <td className="px-2 py-3 text-sm whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => showHistoryFor(property)}
                               title="Owners, sales and name changes for this property across every week"
-                              className="p-1.5 rounded text-indigo-600 hover:bg-indigo-50"
+                              className="p-1.5 rounded text-db-navy hover:bg-db-tint"
                             >
                               <Clock className="w-4 h-4" />
                             </button>
@@ -2028,7 +2094,7 @@ function UserDashboard() {
                                 <span className="font-semibold">Owner (Buyer):</span>{' '}
                                 {property.owner ? (
                                   <button
-                                    className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                                    className="text-db-navy hover:text-db-navy hover:underline"
                                     title="View all properties associated with this owner"
                                     onClick={(e) => { e.stopPropagation(); setEntityFilter(property.owner); }}
                                   >
@@ -2040,7 +2106,7 @@ function UserDashboard() {
                                 <span className="font-semibold">Seller:</span>{' '}
                                 {property.seller ? (
                                   <button
-                                    className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                                    className="text-db-navy hover:text-db-navy hover:underline"
                                     title="View all properties associated with this seller"
                                     onClick={(e) => { e.stopPropagation(); setEntityFilter(property.seller); }}
                                   >
@@ -2064,7 +2130,7 @@ function UserDashboard() {
                   <button onClick={() => setVisibleRows(v => v + PAGE_SIZE)} className="px-4 py-2 rounded-lg border border-gray-300 font-medium text-gray-700 hover:bg-gray-50">
                     Show {Math.min(PAGE_SIZE, filteredProperties.length - visibleRows)} more
                   </button>
-                  <button onClick={() => setVisibleRows(filteredProperties.length)} className="text-blue-600 hover:underline">Show all</button>
+                  <button onClick={() => setVisibleRows(filteredProperties.length)} className="text-db-navy hover:underline">Show all</button>
                 </div>
               )}
             </div>
@@ -2075,138 +2141,6 @@ function UserDashboard() {
           <PropertyHistory databaseType={historyDb || databaseType} fixedMode="history" initialQuery={historyQuery} />
         ) : null}
 
-        {reportFor && (
-          <div className="fixed inset-0 bg-black/60 z-[60] flex items-start justify-center p-4 overflow-y-auto" onClick={() => setReportFor(null)}>
-            <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
-              <PropertyReport type={reportFor.type} id={reportFor.id} onClose={() => setReportFor(null)} />
-            </div>
-          </div>
-        )}
-
-        {/* Full Property Report Modal */}
-        {selectedProperty && (
-          <div
-            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-            onClick={() => setSelectedProperty(null)}
-          >
-            <div
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Modal Header */}
-              <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-8 py-6 rounded-t-2xl flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold">{primaryName(selectedProperty.propertyName)}</h2>
-                  <p className="text-blue-100 text-sm mt-1">
-                    {aliasNames(selectedProperty.propertyName) || 'Insider Report'}{selectedProperty.insiderDate ? ` · reported ${selectedProperty.insiderDate}` : ''}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => openReportFor(selectedProperty, 'report')}
-                    disabled={reportBusy !== null}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-sm disabled:opacity-50"
-                  >
-                    {reportBusy === 'report' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />} One-page report
-                  </button>
-                  <button
-                    onClick={() => openReportFor(selectedProperty, 'pdf')}
-                    disabled={reportBusy !== null}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-700 text-sm hover:bg-blue-50 disabled:opacity-50"
-                  >
-                    {reportBusy === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Download PDF
-                  </button>
-                  <button
-                    onClick={() => setSelectedProperty(null)}
-                    className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Report Sections */}
-              <div className="p-8 space-y-8">
-                <PropertyPhoto
-                  name={primaryName(selectedProperty.propertyName)}
-                  address={selectedProperty.address.trim()}
-                  city={selectedProperty.city}
-                  zip={selectedProperty.zip}
-                  databaseType={databaseType}
-                  admin={ADMIN_ROUTE}
-                />
-                <PropertyMap
-                  name={primaryName(selectedProperty.propertyName)}
-                  address={selectedProperty.address.trim()}
-                  city={selectedProperty.city}
-                  zip={selectedProperty.zip}
-                />
-                {buildReportSections(selectedProperty).filter((section) => section.fields.length > 0).map((section) => (
-                  <div key={section.title}>
-                    <h3 className="text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4">
-                      {section.title}
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
-                      {section.fields.map((field) => (
-                        <div key={field.label} className="flex justify-between py-1.5 border-b border-gray-100 text-sm">
-                          <span className="font-semibold text-gray-600">{field.label}</span>
-                          <span className="text-gray-900 text-right ml-4">{field.value || '—'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-                {/* Comments */}
-                {getFullComments(selectedProperty) && (() => {
-                  const raw = getFullComments(selectedProperty);
-                  const facts = parseComments(raw);
-                  return (
-                    <div>
-                      <h3 className="text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4">
-                        Databank Notes
-                      </h3>
-                      {facts.length > 0 && (
-                        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 mb-4">
-                          {facts.map((f) => (
-                            <div key={f.label} className="flex justify-between gap-4 py-1.5 border-b border-gray-100 text-sm">
-                              <dt className="font-semibold text-gray-600 whitespace-nowrap">{f.label}</dt>
-                              <dd className="text-gray-900 text-right">{f.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      )}
-                      <details open={facts.length === 0} className="text-sm text-gray-700">
-                        <summary className="cursor-pointer text-gray-500 hover:text-gray-800 select-none">Original researcher notes</summary>
-                        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{raw}</p>
-                      </details>
-                    </div>
-                  );
-                })()}
-
-                {/* Every field on the record */}
-                {(() => {
-                  const fields = allFields(selectedProperty);
-                  return (
-                    <details className="text-sm">
-                      <summary className="cursor-pointer text-lg font-bold text-gray-800 border-b-2 border-blue-600 pb-2 mb-4 select-none">
-                        Every field on record <span className="text-sm font-normal text-gray-500">({fields.length} of {excelHeaders.filter(Boolean).length} fields have a value)</span>
-                      </summary>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1">
-                        {fields.map((f) => (
-                          <div key={f.label} className="flex justify-between gap-4 py-1 border-b border-gray-100">
-                            <span className="font-mono text-xs text-gray-500 uppercase whitespace-nowrap">{f.label}</span>
-                            <span className="text-gray-900 text-right break-words">{f.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

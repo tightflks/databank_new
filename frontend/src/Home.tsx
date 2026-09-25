@@ -1,56 +1,31 @@
 import { useState, type FormEvent } from 'react';
 import axios from 'axios';
 import {
-  Search, Clock, Building2, FileSpreadsheet, MapPin, Phone, Printer, Store, Trees, Building, Factory,
-  Briefcase, Hotel, Database, Newspaper, Microscope, LandPlot, Loader2, CheckCircle, ArrowRight
+  Search, Clock, Users, MapPin, Phone, Store, Trees, Building, Factory,
+  Briefcase, Loader2, CheckCircle, ArrowRight
 } from 'lucide-react';
-import MarketPulse from './MarketPulse';
-
-
+import MarketPulse, { useStats, money, weekLabel } from './MarketPulse';
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 interface Props {
-  onStart: () => void;
+  onStart: (query?: string) => void;
 }
 
-const HIGHLIGHTS = [
-  { icon: Search, title: 'Ask in plain English', text: '"Apartments in Cobb over $5M sold this year" — misspellings and old property names included.' },
-  { icon: Clock, title: 'Full property history', text: 'Who owned it, what it sold for, when it changed hands or changed names — one record per property.' },
-  { icon: Building2, title: 'Five databases', text: 'Apartments, Industrial, Office & Shopping, Land Sales, Franchise — updated every Thursday.' },
-  { icon: FileSpreadsheet, title: 'Take it with you', text: 'Export exactly the properties you found to Excel, or open the weekly Insider Report as a PDF.' }
-];
-
-const DISCIPLINES = [
-  { icon: Store, name: 'Retail' },
-  { icon: Trees, name: 'Land' },
-  { icon: Building, name: 'Multi-Family' },
+// The five databases customers actually buy (Search tabs, Trial page and here now agree —
+// previously this list, the search tabs, and the Services copy each named a different set).
+const DATABASES = [
+  { icon: Building, name: 'Apartments' },
   { icon: Factory, name: 'Industrial' },
-  { icon: Briefcase, name: 'Office Space' },
-  { icon: Hotel, name: 'Hotel | Motel' }
+  { icon: Trees, name: 'Land' },
+  { icon: Briefcase, name: 'Offices' },
+  { icon: Store, name: 'Retail' },
 ];
 
-const SERVICES = [
-  {
-    icon: Database,
-    title: 'Online Database',
-    text: 'More than 10,000 intensively researched properties reside in our up-to-date environment; disciplines include Multi-Family, Office, Retail, Industrial, Small Retail, Land and Hotel-Motels. Online entries reflect approximately 10 years of research data, and other Databank files can go back 20 years or more upon request. More than 100 fields of information are included in each file — owner, seller, price paid, number of units or square footage, loan information, broker information and much more.'
-  },
-  {
-    icon: Newspaper,
-    title: 'Weekly Reports',
-    text: 'Databank staff pores over more than 100 key commercial real-estate sales from most counties in the state of Georgia. From that extensive database, priority transactions are published in printed or emailed versions and delivered to Databank clients. No transaction is published until it has been extensively analyzed by Databank\u2019s experienced staff, and every transaction in the weekly reports is uploaded to the online database the same week.'
-  },
-  {
-    icon: Microscope,
-    title: 'Custom Research',
-    text: 'Through more than 50 years of specialized research, Databank staff members add their years of metro Atlanta knowledge to produce custom studies and other research for the specific needs of clients. Databank staff members have an average of 25 years of experience with metro Atlanta commercial real-estate information.'
-  },
-  {
-    icon: LandPlot,
-    title: 'Land Comparison',
-    text: 'Land sales are researched and categorized by their projected uses. More than 3,000 land-sale transactions reside in this online file. Each land sale is originally published in Databank\u2019s weekly Land Insider report.'
-  }
+const HIGHLIGHTS = [
+  { icon: Search, title: 'Ask in plain English', text: '"Apartments in Cobb over $5M sold this year." Misspellings, street abbreviations and old property names still find the right deal.' },
+  { icon: Clock, title: 'Every owner, every name', text: 'One page per property: who bought it, who sold it, what it traded for and every name it has gone by.' },
+  { icon: Users, title: 'The people on the deal', text: 'Brokers, lenders, attorneys and leasing companies with contact details. Export exactly what you found to Excel.' },
 ];
 
 type Customer = { name: string; logo?: string; mark?: boolean; note?: string };
@@ -66,7 +41,7 @@ const CUSTOMERS: Customer[] = [
   { name: 'Berkadia', logo: '/customers/berkadia.svg' },
   { name: 'Franklin Street', logo: '/customers/franklin-street.png', mark: true },
   { name: 'King Industrial Realty', logo: '/customers/king-industrial.png' },
-  { name: 'Eastdil Secured', logo: '/customers/eastdil-secured.png' }
+  { name: 'Eastdil Secured', logo: '/customers/eastdil-secured.png' },
 ];
 
 const MAP_SRC = 'https://www.google.com/maps?q=3108+Piedmont+Road+Suite+235,+Atlanta,+GA+30305&output=embed';
@@ -83,7 +58,7 @@ function ContactForm() {
       await axios.post(`${API_URL}/api/feedback`, {
         message: `[Contact form] ${form.subject}\n\n${form.message}`,
         contact: `${form.first} ${form.last} <${form.email}>`,
-        page: 'contact'
+        page: 'contact',
       });
       setState('sent');
     } catch {
@@ -93,14 +68,14 @@ function ContactForm() {
 
   if (state === 'sent') {
     return (
-      <div className="flex items-center gap-3 text-green-700 bg-green-50 border border-green-200 rounded-xl p-5">
+      <div className="flex items-center gap-3 text-db-green bg-green-50 border border-green-200 rounded-xl p-5">
         <CheckCircle className="w-6 h-6 shrink-0" />
         <p>Thanks — your message is on its way to the Databank team. We'll reply to {form.email}.</p>
       </div>
     );
   }
 
-  const input = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0b1f5c]/40';
+  const input = 'w-full rounded-lg border border-db-borderStrong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-db-navy/30';
   return (
     <form onSubmit={submit} className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -111,90 +86,131 @@ function ContactForm() {
       <input required placeholder="Subject" value={form.subject} onChange={set('subject')} className={input} />
       <textarea required rows={4} placeholder="Message" value={form.message} onChange={set('message')} className={input} />
       {state === 'error' && <p className="text-sm text-red-600">Couldn't send — please call (404) 872-8880.</p>}
-      <button type="submit" disabled={state === 'sending'} className="inline-flex items-center gap-2 bg-[#0b1f5c] text-white font-semibold px-5 py-2.5 rounded-lg hover:bg-[#122a7a] disabled:opacity-50">
+      <button type="submit" disabled={state === 'sending'} className="inline-flex items-center gap-2 bg-db-navy text-white font-semibold px-5 py-2.5 rounded-lg hover:bg-db-navyLight disabled:opacity-50">
         {state === 'sending' ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />} Send message
       </button>
     </form>
   );
 }
 
+const TRY_QUERIES = [
+  'Industrial sales outside the perimeter since 2024',
+  'Who owned 1000 Belmont before?',
+  'Land for apartments in North Atlanta',
+];
+
 export default function Home({ onStart }: Props) {
+  const stats = useStats();
+  const [q, setQ] = useState('Apartments in Cobb over $5M sold this year');
+  const tw = stats?.thisWeek;
+
   return (
-    <div className="space-y-14">
-      <section className="relative rounded-2xl overflow-hidden shadow-xl min-h-[340px] sm:min-h-[420px] flex items-end">
-        <img src="/atl-skyline.jpg" alt="Atlanta skyline" className="absolute inset-0 w-full h-full object-cover" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0b1f5c]/90 via-[#0b1f5c]/40 to-transparent" />
-        <div className="relative p-6 sm:p-10 text-white max-w-2xl">
-          <p className="uppercase tracking-[0.3em] text-xs sm:text-sm text-blue-200 mb-3">Databank Atlanta · since 1970</p>
-          <h1 className="text-3xl sm:text-5xl font-bold leading-tight mb-4">Atlanta's Leader in Commercial Real-Estate Insights</h1>
-          <p className="text-blue-100 text-base sm:text-lg mb-2">
-            Fifty years of observing, studying and reporting on Atlanta commercial real estate — now searchable in one place.
+    <div className="space-y-14 font-sans text-db-text">
+      {/* Hero: one headline, one search bar, one call to action — the rest follows below. */}
+      <section className="grid lg:grid-cols-[7fr,5fr] gap-10 items-start">
+        <div className="flex flex-col gap-6">
+          <div className="text-xs font-semibold tracking-widest uppercase text-db-goldText">Atlanta commercial real estate · Researched since 1970</div>
+          <h1 className="font-serif font-semibold text-4xl sm:text-5xl leading-tight text-db-ink m-0">
+            Every Atlanta commercial sale, verified by people who know the market.
+          </h1>
+          <p className="text-lg text-db-subtle max-w-xl m-0">
+            Prices, buyers, sellers, lenders and brokers for {stats?.totalProperties ? `${Math.round(stats.totalProperties / 1000)}k+` : '18,000+'} properties across metro
+            Atlanta and Georgia. Ask a question in plain English and get the exact deals back.
           </p>
-          <p className="uppercase tracking-widest text-xs text-blue-200 mb-6">Investors · Brokers · Developers · Appraisers</p>
-          <button
-            onClick={onStart}
-            className="inline-flex items-center gap-2 bg-white text-[#0b1f5c] font-semibold px-6 py-3 rounded-xl shadow hover:bg-blue-50"
+
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => { e.preventDefault(); onStart(q); }}
           >
-            <Search className="w-5 h-5" /> Search the database
-          </button>
+            <label htmlFor="hero-q" className="text-sm font-semibold text-db-text">Ask the database</label>
+            <div className="flex items-center gap-3 bg-white border-[1.5px] border-db-navy rounded-xl px-3 py-1.5 shadow-sm">
+              <Search className="w-5 h-5 text-db-muted shrink-0" />
+              <input id="hero-q" value={q} onChange={(e) => setQ(e.target.value)} className="flex-1 border-0 outline-none text-lg bg-transparent h-11" />
+              <button type="submit" className="bg-db-navy text-white font-semibold text-sm px-5 py-3 rounded-lg hover:bg-db-navyLight">Search</button>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-xs text-db-muted">Try:</span>
+              {TRY_QUERIES.map((t) => (
+                <button type="button" key={t} onClick={() => onStart(t)} className="text-xs text-db-navy bg-db-tint px-3 py-1.5 rounded-full hover:bg-db-tint/70">{t}</button>
+              ))}
+            </div>
+          </form>
+
+          <div className="flex items-center gap-5 flex-wrap">
+            <button onClick={() => onStart()} className="bg-db-navy text-white font-semibold px-6 py-3.5 rounded-lg hover:bg-db-navyLight">Start your 30-day free trial</button>
+            <a href="#insider" className="text-db-navy font-semibold text-sm hover:underline">See a sample Insider report</a>
+          </div>
+          <p className="text-xs text-db-muted m-0">No credit card needed. Invite your whole team during the trial.</p>
         </div>
+
+        <aside id="insider" className="bg-white border border-db-border rounded-2xl overflow-hidden shadow-sm">
+          <div className="bg-db-navy text-white px-6 py-4 flex justify-between items-baseline">
+            <div className="font-semibold text-sm">This week's Insider</div>
+            <div className="text-xs text-db-tint num">Week of {weekLabel(stats?.week ?? null)}</div>
+          </div>
+          {tw && tw.count > 0 ? (
+            <>
+              <div className="grid grid-cols-2 border-b border-db-border">
+                <div className="px-6 py-5 border-r border-db-border">
+                  <div className="text-3xl font-semibold text-db-ink num">{tw.count}</div>
+                  <div className="text-xs text-db-muted">transactions reported</div>
+                </div>
+                <div className="px-6 py-5">
+                  <div className="text-3xl font-semibold text-db-ink num">{money(tw.volume)}</div>
+                  <div className="text-xs text-db-muted">total sale volume</div>
+                </div>
+              </div>
+              {tw.biggest && (
+                <div className="px-6 py-5 flex flex-col gap-1 border-b border-db-border">
+                  <div className="text-xs font-semibold tracking-wide uppercase text-db-goldText">Largest sale</div>
+                  <div className="text-lg font-semibold text-db-ink">{tw.biggest.name || '(unnamed property)'}</div>
+                  <div className="text-sm text-db-muted num">{tw.biggest.city} · {tw.biggest.type} · {money(tw.biggest.price)}</div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="px-6 py-8 text-sm text-db-muted">This week's numbers are being finalized.</div>
+          )}
+          <button onClick={() => onStart()} className="w-full text-left px-6 py-4 text-sm font-semibold text-db-navy hover:bg-db-tint flex items-center justify-between">
+            See this week's sales <ArrowRight className="w-4 h-4" />
+          </button>
+        </aside>
       </section>
 
-      <MarketPulse onStart={onStart} />
-
-      <section className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid sm:grid-cols-3 gap-4">
         {HIGHLIGHTS.map(({ icon: Icon, title, text }) => (
-          <div key={title} className="bg-white rounded-xl shadow p-5">
-            <Icon className="w-6 h-6 text-[#0b1f5c] mb-3" />
-            <h3 className="font-semibold text-gray-900 mb-1">{title}</h3>
-            <p className="text-sm text-gray-600">{text}</p>
+          <div key={title} className="bg-white border border-db-border rounded-xl p-6">
+            <Icon className="w-6 h-6 text-db-navy mb-3" />
+            <h3 className="font-semibold text-db-ink mb-1">{title}</h3>
+            <p className="text-sm text-db-subtle leading-relaxed">{text}</p>
           </div>
         ))}
       </section>
 
-      <section id="services" className="scroll-mt-24">
-        <div className="relative rounded-2xl overflow-hidden shadow-lg min-h-[200px] flex items-center mb-8">
-          <img src="/services-banner.jpg" alt="" className="absolute inset-0 w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-[#0b1f5c]/70" />
-          <div className="relative p-6 sm:p-10 text-white">
-            <p className="uppercase tracking-[0.3em] text-xs text-blue-200 mb-2">Services</p>
-            <h2 className="text-2xl sm:text-4xl font-bold">Knowledge… it is Databank's only service</h2>
+      <section className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {DATABASES.map(({ icon: Icon, name }) => (
+          <div key={name} className="bg-white border border-db-border rounded-xl p-4 flex flex-col items-center text-center gap-2 hover:shadow-sm transition">
+            <span className="w-11 h-11 rounded-full bg-db-tint text-db-navy flex items-center justify-center"><Icon className="w-5 h-5" /></span>
+            <span className="text-sm font-semibold text-db-ink">{name}</span>
           </div>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
-          {DISCIPLINES.map(({ icon: Icon, name }) => (
-            <div key={name} className="bg-white rounded-xl shadow p-4 flex flex-col items-center text-center gap-2 hover:shadow-md transition">
-              <span className="w-11 h-11 rounded-full bg-blue-50 text-[#0b1f5c] flex items-center justify-center"><Icon className="w-5 h-5" /></span>
-              <span className="text-sm font-semibold text-gray-800">{name}</span>
-            </div>
-          ))}
-        </div>
-        <div className="grid md:grid-cols-2 gap-4">
-          {SERVICES.map(({ icon: Icon, title, text }) => (
-            <div key={title} className="bg-white rounded-2xl shadow p-6 sm:p-8">
-              <div className="flex items-center gap-3 mb-3">
-                <span className="w-10 h-10 rounded-lg bg-[#0b1f5c] text-white flex items-center justify-center"><Icon className="w-5 h-5" /></span>
-                <h3 className="text-xl font-bold text-gray-900">{title}</h3>
-              </div>
-              <p className="text-gray-700 leading-relaxed text-sm sm:text-base">{text}</p>
-            </div>
-          ))}
-        </div>
+        ))}
       </section>
 
-      <section className="bg-white rounded-2xl shadow p-6 sm:p-10 grid md:grid-cols-[auto,1fr] gap-8 items-start">
-        <img src="/alan-wexler.jpg" alt="Alan Wexler, President & CEO" className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover shadow mx-auto md:mx-0" />
+      <MarketPulse onStart={() => onStart()} stats={stats} />
+
+      <section className="bg-white border border-db-border rounded-2xl p-6 sm:p-10 grid md:grid-cols-[auto,1fr] gap-8 items-start">
+        <img src="/alan-wexler.jpg" alt="Alan Wexler, Databank president" className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover mx-auto md:mx-0" />
         <div>
-          <p className="uppercase tracking-widest text-xs text-gray-500 mb-1">From the President</p>
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Alan Wexler, President & CEO</h2>
-          <div className="space-y-3 text-gray-700 leading-relaxed">
+          <p className="uppercase tracking-widest text-xs text-db-muted mb-1">A note from our president</p>
+          <h2 className="font-serif font-semibold text-2xl text-db-ink mb-4">Alan Wexler</h2>
+          <div className="space-y-3 text-db-subtle leading-relaxed">
             <p>
               Databank was founded in 1970 to provide pertinent data on the real estate market to the businesses and firms directly
               involved with that industry. Real estate activity, whether from development or sales, involves the proper analysis of
               needs, timing and location of product and programs.
             </p>
             <p>
-              Databank is the leading source for Brokers, Appraisers, Owners, Lenders, Attorneys and other businesses related to the
+              Databank is the leading source for brokers, appraisers, owners, lenders, attorneys and other businesses related to the
               Atlanta real estate market. Before you make a decision on your next deal, make sure your homework is complete by letting
               Databank do it for you.
             </p>
@@ -203,35 +219,35 @@ export default function Home({ onStart }: Props) {
       </section>
 
       <section className="text-center">
-        <p className="uppercase tracking-widest text-xs text-gray-500 mb-4">Valued customers</p>
+        <p className="uppercase tracking-widest text-xs text-db-muted mb-4">Valued customers</p>
         <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-8 max-w-4xl mx-auto">
           {CUSTOMERS.map((c) => (
             <div key={c.name} className="flex flex-col items-center justify-center gap-1">
               {c.logo ? (
                 c.mark ? (
                   <div className="flex items-center gap-2">
-                    <img src={c.logo} alt="" className="h-9 w-9 object-contain" />
-                    <span className="text-sm font-semibold text-gray-800">{c.name}</span>
+                    <img src={c.logo} alt={c.name} className="h-9 w-9 object-contain" />
+                    <span className="text-sm font-semibold text-db-ink">{c.name}</span>
                   </div>
                 ) : (
                   <img src={c.logo} alt={c.name} className="h-9 sm:h-10 max-w-[170px] w-auto object-contain" />
                 )
               ) : (
-                <span className="text-sm font-semibold text-gray-800 uppercase tracking-wide">{c.name}</span>
+                <span className="text-sm font-semibold text-db-ink uppercase tracking-wide">{c.name}</span>
               )}
-              {c.note && <span className="text-[11px] text-gray-500">{c.note}</span>}
+              {c.note && <span className="text-[11px] text-db-muted">{c.note}</span>}
             </div>
           ))}
         </div>
       </section>
 
       <section id="contact" className="scroll-mt-24 grid lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-2xl shadow p-6 sm:p-8">
-          <p className="uppercase tracking-widest text-xs text-gray-500 mb-1">Get in touch</p>
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Contact Databank</h2>
+        <div className="bg-white border border-db-border rounded-2xl p-6 sm:p-8">
+          <p className="uppercase tracking-widest text-xs text-db-muted mb-1">Get in touch</p>
+          <h2 className="font-serif font-semibold text-2xl text-db-ink mb-4">Contact Databank</h2>
           <ContactForm />
         </div>
-        <div className="rounded-2xl overflow-hidden shadow flex flex-col">
+        <div className="rounded-2xl overflow-hidden border border-db-border flex flex-col">
           <iframe
             title="Databank office — 3108 Piedmont Road, Suite 235, Atlanta, GA 30305"
             src={MAP_SRC}
@@ -240,26 +256,19 @@ export default function Home({ onStart }: Props) {
             referrerPolicy="no-referrer-when-downgrade"
             allowFullScreen
           />
-          <div className="bg-[#0b1f5c] text-white p-5 grid sm:grid-cols-3 gap-4">
+          <div className="bg-db-navy text-white p-5 grid sm:grid-cols-2 gap-4">
             <div className="flex gap-3">
-              <MapPin className="w-5 h-5 mt-0.5 text-blue-200 shrink-0" />
+              <MapPin className="w-5 h-5 mt-0.5 text-db-tint shrink-0" />
               <div>
                 <p className="font-semibold text-sm">Atlanta, Georgia</p>
-                <p className="text-blue-100 text-xs">3108 Piedmont Road, Suite 235<br />Atlanta, GA 30305</p>
+                <p className="text-db-tint text-xs">3108 Piedmont Road, Suite 235<br />Atlanta, GA 30305</p>
               </div>
             </div>
             <div className="flex gap-3">
-              <Phone className="w-5 h-5 mt-0.5 text-blue-200 shrink-0" />
+              <Phone className="w-5 h-5 mt-0.5 text-db-tint shrink-0" />
               <div>
                 <p className="font-semibold text-sm">Office</p>
-                <a href="tel:+14048728880" className="text-blue-100 text-xs hover:text-white">(404) 872-8880</a>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <Printer className="w-5 h-5 mt-0.5 text-blue-200 shrink-0" />
-              <div>
-                <p className="font-semibold text-sm">Fax</p>
-                <p className="text-blue-100 text-xs">(404) 872-0231</p>
+                <a href="tel:+14048728880" className="text-db-tint text-xs hover:text-white num">(404) 872-8880</a>
               </div>
             </div>
           </div>

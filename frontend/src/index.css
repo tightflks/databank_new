@@ -1,3 +1,14 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    background: #F6F5F0;
+    color: #121A2A;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}

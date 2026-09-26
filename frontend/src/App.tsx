@@ -100,22 +100,43 @@ function App() {
   };
   const [account, setAccount] = useState<AccountInfo | null | undefined>(undefined); // undefined = still loading
   const [trialEndedFor, setTrialEndedFor] = useState<string | null>(null);
+  const [verifyPendingFor, setVerifyPendingFor] = useState<string | null>(null);
+  const [resetToken, setResetToken] = useState<string | null>(new URLSearchParams(window.location.search).get('resetToken'));
 
   useEffect(() => {
     axios.get(`${API_URL}/api/account/me`)
       .then(r => setAccount(r.data?.loggedIn ? {
         email: r.data.email, trialEndsAt: r.data.trialEndsAt, paidUntil: r.data.paidUntil ?? null, paidIndefinite: Boolean(r.data.paidIndefinite),
-        hasAccess: r.data.hasAccess, daysLeft: r.data.daysLeft ?? null,
+        hasAccess: r.data.hasAccess, daysLeft: r.data.daysLeft ?? null, needsVerification: Boolean(r.data.needsVerification),
       } : null))
       .catch(() => setAccount(null));
   }, []);
 
+  // A password-reset link (?resetToken=...) or the verify-email redirect (?verified=1 /
+  // ?verifyError=1) should open straight into the right screen, not a generic sign-in form.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('resetToken')) { setLoginOpen(true); return; }
+    if (params.has('verified') || params.has('verifyError')) {
+      if (params.has('verified')) axios.get(`${API_URL}/api/account/me`).then(r => r.data?.loggedIn && setAccount({
+        email: r.data.email, trialEndsAt: r.data.trialEndsAt, paidUntil: r.data.paidUntil ?? null, paidIndefinite: Boolean(r.data.paidIndefinite),
+        hasAccess: r.data.hasAccess, daysLeft: r.data.daysLeft ?? null, needsVerification: Boolean(r.data.needsVerification),
+      }));
+      window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+    }
+  }, []);
+
   // Opening #search or a direct property link without an active account (fresh visit, or a
-  // session whose trial just ended) should prompt sign-in immediately.
+  // session whose trial just ended, or one that's signed up but not yet verified) should
+  // prompt sign-in immediately.
   useEffect(() => {
     if ((publicView !== 'search' && !propertyRoute) || account === undefined) return;
     if (!account) { setLoginOpen(true); return; }
-    if (!account.hasAccess) { setTrialEndedFor(account.email); setLoginOpen(true); }
+    if (!account.hasAccess) {
+      if (account.needsVerification) setVerifyPendingFor(account.email);
+      else setTrialEndedFor(account.email);
+      setLoginOpen(true);
+    }
   }, [publicView, propertyRoute, account]);
 
   const accountLogout = async () => {
@@ -364,8 +385,10 @@ function App() {
         {loginOpen && (
           <LoginModal
             trialEndedFor={trialEndedFor}
-            onClose={() => { setLoginOpen(false); setTrialEndedFor(null); closeProperty(); showPublic('home'); }}
-            onAuthed={(acct) => { setAccount(acct); setTrialEndedFor(null); setLoginOpen(false); }}
+            verifyPendingFor={verifyPendingFor}
+            resetToken={resetToken}
+            onClose={() => { setLoginOpen(false); setTrialEndedFor(null); setVerifyPendingFor(null); setResetToken(null); closeProperty(); showPublic('home'); }}
+            onAuthed={(acct) => { setAccount(acct); setTrialEndedFor(null); setVerifyPendingFor(null); setResetToken(null); setLoginOpen(false); }}
           />
         )}
         <div className="min-h-screen bg-gray-50" />
@@ -453,8 +476,10 @@ function App() {
       {loginOpen && (
         <LoginModal
           trialEndedFor={trialEndedFor}
-          onClose={() => { setLoginOpen(false); setTrialEndedFor(null); if (!account?.hasAccess) showPublic('home'); }}
-          onAuthed={(acct) => { setAccount(acct); setTrialEndedFor(null); setLoginOpen(false); showPublic('search'); }}
+          verifyPendingFor={verifyPendingFor}
+          resetToken={resetToken}
+          onClose={() => { setLoginOpen(false); setTrialEndedFor(null); setVerifyPendingFor(null); setResetToken(null); if (!account?.hasAccess) showPublic('home'); }}
+          onAuthed={(acct) => { setAccount(acct); setTrialEndedFor(null); setVerifyPendingFor(null); setResetToken(null); setLoginOpen(false); showPublic('search'); }}
         />
       )}
 

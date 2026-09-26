@@ -1,7 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { isAdmin, requireAdmin } from './auth';
-import { sendWelcomeMail } from './mail';
+import { sendVerifyMail, sendResetMail } from './mail';
 import { initSessions, createSession, getSession, deleteSession } from './sessions';
 
 // Customer accounts: self-serve signup (email + a password the user picks themselves — not
@@ -34,9 +34,10 @@ type UserRow = {
   first_name: string | null;
   last_name: string | null;
   company: string | null;
+  email_verified: number;
 };
 
-type Session = { userId: number; email: string; trialEndsAt: number; paidUntil: number | null; paidIndefinite: boolean };
+type Session = { userId: number; email: string; trialEndsAt: number; paidUntil: number | null; paidIndefinite: boolean; emailVerified: boolean };
 
 const COOKIE = 'databank_user';
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // the browser session cookie can outlive the trial;
@@ -85,6 +86,7 @@ function userToSession(u: UserRow): Session {
     trialEndsAt: new Date(u.trial_ends_at).getTime(),
     paidUntil: u.paid_until ? new Date(u.paid_until).getTime() : null,
     paidIndefinite: Boolean(u.paid_indefinite),
+    emailVerified: Boolean(u.email_verified),
   };
 }
 
@@ -93,7 +95,11 @@ function userToSession(u: UserRow): Session {
 // trial instead" — the exact same null a brand-new, never-marked-paid account has. A customer
 // marked paid that way was silently locked out at day 30. paid_indefinite is now a separate,
 // explicit flag for that state so it can never be confused with "no admin action taken."
+// Same review also flagged that signup accepted any email with nothing to confirm the signer
+// actually controls it — someone@cbre.com would get a trial "as" that firm. Verification is
+// now required for access (an admin session bypasses this, same as everything else).
 function hasAccess(s: Session): boolean {
+  if (!s.emailVerified) return false;
   if (s.paidIndefinite) return true;
   const now = Date.now();
   if (s.paidUntil !== null) return s.paidUntil > now;
@@ -123,6 +129,28 @@ const getUserByEmailStmt = () => db_!.prepare('SELECT * FROM users WHERE email =
 const getUserByIdStmt = () => db_!.prepare('SELECT * FROM users WHERE id = ?');
 const insertUserStmt = () =>
   db_!.prepare('INSERT INTO users (email, password_hash, salt, trial_ends_at, first_name, last_name, company) VALUES (?, ?, ?, ?, ?, ?, ?)');
+
+const TOKEN_TTL: Record<'verify' | 'reset', number> = {
+  verify: 7 * 24 * 60 * 60 * 1000, // a week — long enough that a trial user who signs up on a
+  // Friday and checks email Monday isn't locked out
+  reset: 60 * 60 * 1000, // an hour — a reset link is more sensitive if intercepted, kept short
+};
+function createEmailToken(userId: number, purpose: 'verify' | 'reset'): string {
+  const token = randomBytes(24).toString('hex');
+  db_!.prepare('INSERT INTO email_tokens (token, user_id, purpose, expires_at) VALUES (?, ?, ?, ?)').run(
+    token, userId, purpose, Date.now() + TOKEN_TTL[purpose],
+  );
+  return token;
+}
+// One-time use: deletes the row whether or not it was valid, so a token can't be replayed.
+function consumeEmailToken(token: string, purpose: 'verify' | 'reset'): number | null {
+  const row = db_!.prepare('SELECT user_id, purpose, expires_at FROM email_tokens WHERE token = ?').get(token) as
+    | { user_id: number; purpose: string; expires_at: number }
+    | undefined;
+  db_!.prepare('DELETE FROM email_tokens WHERE token = ?').run(token);
+  if (!row || row.purpose !== purpose || row.expires_at < Date.now()) return null;
+  return row.user_id;
+}
 
 // Reads the live row on every gated request (not just at login) so an admin marking someone
 // paid, or disabling an account, takes effect immediately rather than waiting for a new login.
@@ -181,9 +209,19 @@ export function registerUserRoutes(app: Express, db: Db) {
   `);
   // Added after the table already existed in production, so each is a separate migration
   // guarded against "column already exists" rather than part of the CREATE TABLE above.
-  for (const col of ['first_name TEXT', 'last_name TEXT', 'company TEXT', 'paid_indefinite INTEGER NOT NULL DEFAULT 0']) {
+  for (const col of ['first_name TEXT', 'last_name TEXT', 'company TEXT', 'paid_indefinite INTEGER NOT NULL DEFAULT 0', 'email_verified INTEGER NOT NULL DEFAULT 0']) {
     try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch { /* already added */ }
   }
+  // Verification links and password-reset links, one row per outstanding link. purpose keeps
+  // the two from being interchangeable (a verify link can't be used to reset a password).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS email_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      purpose TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+  `);
 
   app.post('/api/account/signup', (req: Request, res: Response) => {
     const ip = req.ip || 'unknown';
@@ -202,11 +240,15 @@ export function registerUserRoutes(app: Express, db: Db) {
     const { salt, hash } = hashPassword(password);
     const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const result = insertUserStmt().run(email, hash, salt, trialEndsAt, firstName, lastName, company) as { lastInsertRowid: number };
+    const userId = result.lastInsertRowid;
     recordAttempt(ip, false);
-    const token = createSession('user', String(result.lastInsertRowid), SESSION_MS);
+    const token = createSession('user', String(userId), SESSION_MS);
     setSessionCookie(res, req, token);
-    res.json({ email, trialEndsAt, paidUntil: null, hasAccess: true, daysLeft: TRIAL_DAYS });
-    sendWelcomeMail(email, firstName).catch((e) => console.error('Welcome email failed:', e instanceof Error ? e.message : e));
+    // hasAccess is false until the verification link is clicked — the account exists and the
+    // trial clock has started, but nothing is served until then (see hasAccess() above).
+    res.json({ email, trialEndsAt, paidUntil: null, paidIndefinite: false, hasAccess: false, daysLeft: TRIAL_DAYS, needsVerification: true });
+    const verifyToken = createEmailToken(userId, 'verify');
+    sendVerifyMail(email, firstName, verifyToken).catch((e) => console.error('Verify email failed:', e instanceof Error ? e.message : e));
   });
 
   app.post('/api/account/login', (req: Request, res: Response) => {
@@ -223,7 +265,52 @@ export function registerUserRoutes(app: Express, db: Db) {
     const token = createSession('user', String(row.id), SESSION_MS);
     setSessionCookie(res, req, token);
     const s = userToSession(row);
-    res.json({ email: row.email, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until, paidIndefinite: s.paidIndefinite, hasAccess: hasAccess(s), daysLeft: s.paidIndefinite ? null : daysLeft(s.paidUntil ?? s.trialEndsAt) });
+    res.json({ email: row.email, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until, paidIndefinite: s.paidIndefinite, hasAccess: hasAccess(s), daysLeft: s.paidIndefinite ? null : daysLeft(s.paidUntil ?? s.trialEndsAt), needsVerification: !s.emailVerified });
+  });
+
+  app.get('/api/account/verify', (req: Request, res: Response) => {
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    const userId = token ? consumeEmailToken(token, 'verify') : null;
+    if (!userId) return res.redirect('/?verifyError=1#search');
+    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(userId);
+    res.redirect('/?verified=1#search');
+  });
+
+  app.post('/api/account/resend-verification', (req: Request, res: Response) => {
+    const token = readCookie(req, COOKIE);
+    const subject = token ? getSession('user', token) : null;
+    if (!subject) return res.status(401).json({ error: 'Please sign in first.' });
+    const row = getUserByIdStmt().get(Number(subject)) as UserRow | undefined;
+    if (!row) return res.status(401).json({ error: 'Please sign in first.' });
+    if (row.email_verified) return res.json({ ok: true, alreadyVerified: true });
+    const verifyToken = createEmailToken(row.id, 'verify');
+    sendVerifyMail(row.email, row.first_name, verifyToken).catch((e) => console.error('Verify email failed:', e instanceof Error ? e.message : e));
+    res.json({ ok: true });
+  });
+
+  app.post('/api/account/forgot-password', (req: Request, res: Response) => {
+    const ip = req.ip || 'unknown';
+    if (attemptLimited(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
+    const email = normalizeEmail(req.body?.email);
+    const row = getUserByEmailStmt().get(email) as UserRow | undefined;
+    // Always answer the same way whether or not the email is registered — confirming which
+    // emails have accounts is its own small information leak.
+    if (row && !row.disabled) {
+      const token = createEmailToken(row.id, 'reset');
+      sendResetMail(email, token).catch((e) => console.error('Reset email failed:', e instanceof Error ? e.message : e));
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/account/reset-password', (req: Request, res: Response) => {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    const userId = token ? consumeEmailToken(token, 'reset') : null;
+    if (!userId) return res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one.' });
+    const { salt, hash } = hashPassword(password);
+    db.prepare('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?').run(hash, salt, userId);
+    res.json({ ok: true });
   });
 
   app.post('/api/account/logout', (req: Request, res: Response) => {
@@ -248,6 +335,7 @@ export function registerUserRoutes(app: Express, db: Db) {
       paidIndefinite: session.paidIndefinite,
       hasAccess: hasAccess(session),
       daysLeft: session.paidIndefinite ? null : daysLeft(session.paidUntil ?? session.trialEndsAt),
+      needsVerification: !session.emailVerified,
     });
   });
 

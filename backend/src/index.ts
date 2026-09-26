@@ -669,7 +669,28 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
 
 // Middleware
 app.set('trust proxy', 1);
-app.use(cors({ origin: true, credentials: true }));
+// Restricted to known domains rather than reflecting any origin (a Sep 25 security review
+// flagged cors({ origin: true }) as letting any website make credentialed requests on a
+// logged-in user's behalf). ALLOWED_ORIGINS lets this be extended without a code change once
+// the site moves off the railway.app subdomain onto its own domain.
+const DEFAULT_ORIGINS = [
+  'https://databanknew-production.up.railway.app',
+  'https://databankinfo.com',
+  'https://www.databankinfo.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+const allowedOrigins = new Set([
+  ...DEFAULT_ORIGINS,
+  ...(process.env.ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean),
+]);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.has(origin)) return cb(null, true); // no Origin header = same-origin/non-browser request
+    cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '20mb' }));
 registerAuthRoutes(app, db);
 

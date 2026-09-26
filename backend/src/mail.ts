@@ -46,15 +46,27 @@ export async function sendFeedbackMail(f: FeedbackMail): Promise<void> {
 
 // Sent once, to the new user themselves, right after signup — not a bare "you're in"
 // confirmation, but a quick case for why the trial is worth using.
-export async function sendWelcomeMail(email: string, firstName: string | null): Promise<void> {
+const APP_URL = process.env.APP_URL || 'https://databanknew-production.up.railway.app';
+
+// Sent once, right after signup, in place of a plain welcome email: it has to also carry the
+// verification link, since a Sep 25 security review pointed out signup accepted any email with
+// nothing to confirm the signer actually controls it (someone could sign up as
+// "name@cbre.com" and get a trial that looks like it belongs to that firm). Access is withheld
+// until this link is clicked (see hasAccess() in users.ts), so the value-prop copy doubles as
+// the reason to actually click it rather than ignore it.
+export async function sendVerifyMail(email: string, firstName: string | null, token: string): Promise<void> {
   if (!transport) return;
   const from = process.env.SMTP_FROM || new URL(process.env.SMTP_URL!).username || FEEDBACK_TO[0];
   const name = firstName || 'there';
+  const verifyUrl = `${APP_URL}/api/account/verify?token=${token}`;
   const text = `Hi ${name},
 
-Welcome to Databank — your 30-day free trial of Atlanta's commercial real estate research database is active now.
+Welcome to Databank — one step left before your 30-day free trial of Atlanta's commercial real estate research database is active.
 
-Here's what you get access to:
+Confirm your email to get started:
+${verifyUrl}
+
+Once you're in, here's what you get access to:
 
 - 18,000+ researched properties across apartments, industrial, land, offices and retail, going back to 1970
 - Full transaction history — every sale, every price, every owner a property has had, not just the most recent one
@@ -62,15 +74,33 @@ Here's what you get access to:
 - Ask in plain English — "apartments in Cobb over $5M sold this year" — and get the exact matching properties back
 - A fresh Insider Report every week, so you're never working from stale data
 
-Jump in and search: https://databanknew-production.up.railway.app/#search
-
 Questions, or want a hand getting started? Just reply to this email, or call us at (404) 872-8880.
 
 — The Databank team`;
   await transport.sendMail({
     from: `Databank Research Database <${decodeURIComponent(from)}>`,
     to: email,
-    subject: 'Welcome to Databank — your 30-day trial is active',
+    subject: 'Confirm your email to start your Databank trial',
+    text,
+  });
+}
+
+export async function sendResetMail(email: string, token: string): Promise<void> {
+  if (!transport) return;
+  const from = process.env.SMTP_FROM || new URL(process.env.SMTP_URL!).username || FEEDBACK_TO[0];
+  const resetUrl = `${APP_URL}/?resetToken=${token}#search`;
+  const text = `Someone (hopefully you) asked to reset the password on this Databank account.
+
+Reset it here — this link expires in 1 hour:
+${resetUrl}
+
+If you didn't request this, you can ignore this email; your password hasn't been changed.
+
+— The Databank team`;
+  await transport.sendMail({
+    from: `Databank Research Database <${decodeURIComponent(from)}>`,
+    to: email,
+    subject: 'Reset your Databank password',
     text,
   });
 }

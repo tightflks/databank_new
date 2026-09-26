@@ -8,8 +8,9 @@ export interface AccountInfo {
   email: string;
   trialEndsAt: string;
   paidUntil: string | null;
+  paidIndefinite: boolean;
   hasAccess: boolean;
-  daysLeft: number;
+  daysLeft: number | null;
 }
 
 interface Props {
@@ -43,7 +44,7 @@ export default function LoginModal({ onClose, onAuthed, trialEndedFor }: Props) 
     try {
       const body = mode === 'signup' ? { email, password, firstName, lastName, company } : { email, password };
       const { data } = await axios.post(`${API_URL}/api/account/${mode}`, body);
-      onAuthed({ email: data.email, trialEndsAt: data.trialEndsAt, paidUntil: data.paidUntil ?? null, hasAccess: data.hasAccess ?? true, daysLeft: data.daysLeft });
+      onAuthed({ email: data.email, trialEndsAt: data.trialEndsAt, paidUntil: data.paidUntil ?? null, paidIndefinite: Boolean(data.paidIndefinite), hasAccess: data.hasAccess ?? true, daysLeft: data.daysLeft ?? null });
     } catch (err: any) {
       setError(err.response?.data?.error || 'Something went wrong. Please try again.');
     } finally {

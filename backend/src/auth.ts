@@ -1,17 +1,17 @@
-import { randomBytes, timingSafeEqual } from 'crypto';
+import { timingSafeEqual } from 'crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
+import { initSessions, createSession, getSession, deleteSession } from './sessions';
 
 // Admin login: each admin has their own password rather than one shared one, so a login can be
 // traced to a person and a departing admin's access can be revoked without changing everyone
 // else's password. Configured via ADMIN_PASSWORDS="tareq:pw1,blake:pw2,stephanie:pw3" (comma-
 // separated name:password pairs). ADMIN_PASSWORD (singular, the old single shared password)
 // still works as a fallback, logged in as "admin", for anyone who hasn't set the new variable.
-// Sessions are random tokens held in memory and in an HttpOnly cookie; a redeploy simply asks
-// the admin to sign in again. The User View stays public.
+// Sessions persist in the sessions table (see sessions.ts) rather than only in memory, so a
+// redeploy doesn't sign everyone out. The User View stays public.
 
 const COOKIE = 'databank_admin';
 const SESSION_MS = 12 * 60 * 60 * 1000;
-const sessions = new Map<string, { name: string; exp: number }>();
 
 function readCookie(req: Request, name: string): string | undefined {
   const raw = req.headers.cookie;
@@ -43,7 +43,6 @@ function timingSafeStrEqual(a: string, b: string): boolean {
   return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 }
 
-
 // Finds which configured admin's password this is, if any (case-insensitive on the name isn't
 // needed here since we're matching by password, not name).
 function matchAdmin(given: string): string | null {
@@ -64,14 +63,7 @@ export function isAdmin(req: Request): boolean {
 // The name of the admin behind this session, or null if not logged in / expired.
 export function adminName(req: Request): string | null {
   const token = readCookie(req, COOKIE);
-  if (!token) return null;
-  const s = sessions.get(token);
-  if (!s) return null;
-  if (s.exp < Date.now()) {
-    sessions.delete(token);
-    return null;
-  }
-  return s.name;
+  return token ? getSession('admin', token) : null;
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -84,7 +76,11 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
 
 const attempts = new Map<string, { n: number; until: number }>();
 
-export function registerAuthRoutes(app: Express) {
+type Db = Parameters<typeof initSessions>[0];
+
+export function registerAuthRoutes(app: Express, db: Db) {
+  initSessions(db);
+
   app.get('/api/auth/me', (req: Request, res: Response) => {
     res.json({ admin: isAdmin(req), name: adminName(req), configured: adminConfigured() });
   });
@@ -105,8 +101,7 @@ export function registerAuthRoutes(app: Express) {
       return res.status(401).json({ error: 'Wrong password' });
     }
     attempts.delete(ip);
-    const token = randomBytes(32).toString('hex');
-    sessions.set(token, { name, exp: Date.now() + SESSION_MS });
+    const token = createSession('admin', name, SESSION_MS);
     res.setHeader(
       'Set-Cookie',
       `${COOKIE}=${token}; HttpOnly; Path=/; Max-Age=${SESSION_MS / 1000}; SameSite=Lax${req.secure || req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`,
@@ -116,7 +111,7 @@ export function registerAuthRoutes(app: Express) {
 
   app.post('/api/auth/logout', (req: Request, res: Response) => {
     const token = readCookie(req, COOKIE);
-    if (token) sessions.delete(token);
+    if (token) deleteSession(token);
     res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
     res.json({ admin: false });
   });

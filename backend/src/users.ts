@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { isAdmin, requireAdmin } from './auth';
 import { sendWelcomeMail } from './mail';
+import { initSessions, createSession, getSession, deleteSession } from './sessions';
 
 // Customer accounts: self-serve signup (email + a password the user picks themselves — not
 // something we generate and hand them, which is what made the old Becton accounts hard to
@@ -28,19 +29,19 @@ type UserRow = {
   created_date: string;
   trial_ends_at: string;
   paid_until: string | null;
+  paid_indefinite: number;
   disabled: number;
   first_name: string | null;
   last_name: string | null;
   company: string | null;
 };
 
-type Session = { userId: number; email: string; trialEndsAt: number; paidUntil: number | null };
+type Session = { userId: number; email: string; trialEndsAt: number; paidUntil: number | null; paidIndefinite: boolean };
 
 const COOKIE = 'databank_user';
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // the browser session cookie can outlive the trial;
 // requireUser is what actually decides access, on every request, from the live DB row.
 const TRIAL_DAYS = 30;
-const sessions = new Map<string, { token_exp: number; userId: number }>();
 
 function readCookie(req: Request, name: string): string | undefined {
   const raw = req.headers.cookie;
@@ -83,12 +84,17 @@ function userToSession(u: UserRow): Session {
     email: u.email,
     trialEndsAt: new Date(u.trial_ends_at).getTime(),
     paidUntil: u.paid_until ? new Date(u.paid_until).getTime() : null,
+    paidIndefinite: Boolean(u.paid_indefinite),
   };
 }
 
-// Access is granted while the trial hasn't ended, OR while an admin has marked the account paid
-// through (paid_until in the future, or null meaning "paid, no end date set").
+// A security review (Sep 25) caught a real bug here: the admin screen's "leave blank for paid,
+// no end date" sent paid_until: null, which this function used to read as "not paid, check the
+// trial instead" — the exact same null a brand-new, never-marked-paid account has. A customer
+// marked paid that way was silently locked out at day 30. paid_indefinite is now a separate,
+// explicit flag for that state so it can never be confused with "no admin action taken."
 function hasAccess(s: Session): boolean {
+  if (s.paidIndefinite) return true;
   const now = Date.now();
   if (s.paidUntil !== null) return s.paidUntil > now;
   return s.trialEndsAt > now;
@@ -124,11 +130,11 @@ export function requireUser(req: Request, res: Response, next: NextFunction) {
   if (isAdmin(req)) return next(); // admin sessions always have full access
   if (!db_) return res.status(503).json({ error: 'Accounts are not set up yet.' });
   const token = readCookie(req, COOKIE);
-  const s = token ? sessions.get(token) : undefined;
-  if (!s) return res.status(401).json({ error: 'Please sign in to search Databank.' });
-  const row = getUserByIdStmt().get(s.userId) as UserRow | undefined;
+  const subject = token ? getSession('user', token) : null;
+  if (!subject) return res.status(401).json({ error: 'Please sign in to search Databank.' });
+  const row = getUserByIdStmt().get(Number(subject)) as UserRow | undefined;
   if (!row || row.disabled) {
-    sessions.delete(token!);
+    if (token) deleteSession(token);
     return res.status(401).json({ error: 'Please sign in to search Databank.' });
   }
   const session = userToSession(row);
@@ -151,14 +157,15 @@ export function usersConfigured(): boolean {
 export function currentUserEmail(req: Request): string | null {
   if (!db_) return null;
   const token = readCookie(req, COOKIE);
-  const s = token ? sessions.get(token) : undefined;
-  if (!s) return null;
-  const row = getUserByIdStmt().get(s.userId) as UserRow | undefined;
+  const subject = token ? getSession('user', token) : null;
+  if (!subject) return null;
+  const row = getUserByIdStmt().get(Number(subject)) as UserRow | undefined;
   return row && !row.disabled ? row.email : null;
 }
 
 export function registerUserRoutes(app: Express, db: Db) {
   db_ = db;
+  initSessions(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +181,7 @@ export function registerUserRoutes(app: Express, db: Db) {
   `);
   // Added after the table already existed in production, so each is a separate migration
   // guarded against "column already exists" rather than part of the CREATE TABLE above.
-  for (const col of ['first_name TEXT', 'last_name TEXT', 'company TEXT']) {
+  for (const col of ['first_name TEXT', 'last_name TEXT', 'company TEXT', 'paid_indefinite INTEGER NOT NULL DEFAULT 0']) {
     try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch { /* already added */ }
   }
 
@@ -196,8 +203,7 @@ export function registerUserRoutes(app: Express, db: Db) {
     const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const result = insertUserStmt().run(email, hash, salt, trialEndsAt, firstName, lastName, company) as { lastInsertRowid: number };
     recordAttempt(ip, false);
-    const token = randomBytes(32).toString('hex');
-    sessions.set(token, { token_exp: Date.now() + SESSION_MS, userId: result.lastInsertRowid });
+    const token = createSession('user', String(result.lastInsertRowid), SESSION_MS);
     setSessionCookie(res, req, token);
     res.json({ email, trialEndsAt, paidUntil: null, hasAccess: true, daysLeft: TRIAL_DAYS });
     sendWelcomeMail(email, firstName).catch((e) => console.error('Welcome email failed:', e instanceof Error ? e.message : e));
@@ -214,25 +220,24 @@ export function registerUserRoutes(app: Express, db: Db) {
       return res.status(401).json({ error: 'Wrong email or password.' });
     }
     recordAttempt(ip, false);
-    const token = randomBytes(32).toString('hex');
-    sessions.set(token, { token_exp: Date.now() + SESSION_MS, userId: row.id });
+    const token = createSession('user', String(row.id), SESSION_MS);
     setSessionCookie(res, req, token);
     const s = userToSession(row);
-    res.json({ email: row.email, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until, hasAccess: hasAccess(s), daysLeft: daysLeft(s.paidUntil ?? s.trialEndsAt) });
+    res.json({ email: row.email, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until, paidIndefinite: s.paidIndefinite, hasAccess: hasAccess(s), daysLeft: s.paidIndefinite ? null : daysLeft(s.paidUntil ?? s.trialEndsAt) });
   });
 
   app.post('/api/account/logout', (req: Request, res: Response) => {
     const token = readCookie(req, COOKIE);
-    if (token) sessions.delete(token);
+    if (token) deleteSession(token);
     res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
     res.json({ loggedIn: false });
   });
 
   app.get('/api/account/me', (req: Request, res: Response) => {
     const token = readCookie(req, COOKIE);
-    const s = token ? sessions.get(token) : undefined;
-    if (!s) return res.json({ loggedIn: false });
-    const row = getUserByIdStmt().get(s.userId) as UserRow | undefined;
+    const subject = token ? getSession('user', token) : null;
+    if (!subject) return res.json({ loggedIn: false });
+    const row = getUserByIdStmt().get(Number(subject)) as UserRow | undefined;
     if (!row || row.disabled) return res.json({ loggedIn: false });
     const session = userToSession(row);
     res.json({
@@ -240,8 +245,9 @@ export function registerUserRoutes(app: Express, db: Db) {
       email: row.email,
       trialEndsAt: row.trial_ends_at,
       paidUntil: row.paid_until,
+      paidIndefinite: session.paidIndefinite,
       hasAccess: hasAccess(session),
-      daysLeft: daysLeft(session.paidUntil ?? session.trialEndsAt),
+      daysLeft: session.paidIndefinite ? null : daysLeft(session.paidUntil ?? session.trialEndsAt),
     });
   });
 
@@ -250,7 +256,7 @@ export function registerUserRoutes(app: Express, db: Db) {
   // pay by check/ACH through an AP department), so this is how an admin actually grants access
   // once a payment comes in.
   const listUsersStmt = db.prepare('SELECT * FROM users ORDER BY created_date DESC');
-  const setPaidStmt = db.prepare('UPDATE users SET paid_until = ? WHERE id = ?');
+  const setPaidStmt = db.prepare('UPDATE users SET paid_until = ?, paid_indefinite = ? WHERE id = ?');
   const setDisabledStmt = db.prepare('UPDATE users SET disabled = ? WHERE id = ?');
   const updateUserStmt = db.prepare('UPDATE users SET first_name = ?, last_name = ?, company = ?, email = ? WHERE id = ?');
 
@@ -260,22 +266,36 @@ export function registerUserRoutes(app: Express, db: Db) {
       const session = userToSession(row);
       return {
         id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, company: row.company,
-        createdDate: row.created_date, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until,
+        createdDate: row.created_date, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until, paidIndefinite: session.paidIndefinite,
         disabled: Boolean(row.disabled), hasAccess: !row.disabled && hasAccess(session),
       };
     });
     res.json({ users, activeCount: users.filter((u) => u.hasAccess).length, totalCount: users.length });
   });
 
-  // paidUntil: an ISO date string to grant access through, or null for "paid, no end date."
-  // Sending neither (paidUntil: undefined isn't valid JSON, so send null explicitly) reverts
-  // to trial-only access.
+  // paidUntil: an ISO date string ("YYYY-MM-DD") to grant access through, or null for "paid, no
+  // end date" — stored as its own explicit paid_indefinite flag rather than overloading null,
+  // which used to be indistinguishable from "never marked paid at all" (a real bug a Sep 25
+  // security review caught: an admin picking "no end date" actually left the account on
+  // trial-only access and it expired at day 30 anyway). Sending neither paidUntil nor
+  // indefinite reverts to trial-only.
   app.post('/api/account/admin/users/:id/paid', requireAdmin, (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid id' });
-    const paidUntil = typeof req.body?.paidUntil === 'string' ? req.body.paidUntil : null;
-    setPaidStmt.run(paidUntil, id);
-    res.json({ ok: true, paidUntil });
+    if (req.body?.indefinite === true) {
+      setPaidStmt.run(null, 1, id);
+      return res.json({ ok: true, paidUntil: null, paidIndefinite: true });
+    }
+    const raw = req.body?.paidUntil;
+    if (raw === null || raw === undefined || raw === '') {
+      setPaidStmt.run(null, 0, id);
+      return res.json({ ok: true, paidUntil: null, paidIndefinite: false });
+    }
+    if (typeof raw !== 'string' || Number.isNaN(new Date(raw).getTime())) {
+      return res.status(400).json({ error: 'paidUntil must be a valid date (YYYY-MM-DD).' });
+    }
+    setPaidStmt.run(raw, 0, id);
+    res.json({ ok: true, paidUntil: raw, paidIndefinite: false });
   });
 
   app.post('/api/account/admin/users/:id/disabled', requireAdmin, (req: Request, res: Response) => {

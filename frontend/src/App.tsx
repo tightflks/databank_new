@@ -104,8 +104,8 @@ function App() {
   useEffect(() => {
     axios.get(`${API_URL}/api/account/me`)
       .then(r => setAccount(r.data?.loggedIn ? {
-        email: r.data.email, trialEndsAt: r.data.trialEndsAt, paidUntil: r.data.paidUntil ?? null,
-        hasAccess: r.data.hasAccess, daysLeft: r.data.daysLeft,
+        email: r.data.email, trialEndsAt: r.data.trialEndsAt, paidUntil: r.data.paidUntil ?? null, paidIndefinite: Boolean(r.data.paidIndefinite),
+        hasAccess: r.data.hasAccess, daysLeft: r.data.daysLeft ?? null,
       } : null))
       .catch(() => setAccount(null));
   }, []);
@@ -435,7 +435,7 @@ function App() {
                     <>
                       <div className="my-1 border-t border-gray-100" />
                       <div className="px-4 py-2 text-xs text-gray-400 truncate">
-                        {account.email} · {account.paidUntil ? 'Active' : account.hasAccess ? `${account.daysLeft} day${account.daysLeft === 1 ? '' : 's'} left in trial` : 'Trial ended'}
+                        {account.email} · {account.paidIndefinite || account.paidUntil ? 'Active' : account.hasAccess ? `${account.daysLeft} day${account.daysLeft === 1 ? '' : 's'} left in trial` : 'Trial ended'}
                       </div>
                       <button onClick={() => { setMenuOpen(false); accountLogout(); }} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-gray-700 hover:bg-gray-50">
                         <LogOut className="w-4 h-4" /> Sign out

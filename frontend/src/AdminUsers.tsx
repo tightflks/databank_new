@@ -13,6 +13,7 @@ interface AccountUser {
   createdDate: string;
   trialEndsAt: string;
   paidUntil: string | null;
+  paidIndefinite: boolean;
   disabled: boolean;
   hasAccess: boolean;
 }
@@ -58,11 +59,18 @@ export default function AdminUsers() {
   useEffect(() => { load(); }, []);
 
   const markPaid = async (u: AccountUser) => {
-    const input = window.prompt(`Grant ${u.email} access through what date? (YYYY-MM-DD, or leave blank for "paid, no end date")`, '');
+    const input = window.prompt(`Grant ${u.email} access through what date? (YYYY-MM-DD)\n\nLeave blank and click OK for "paid, no end date."`, '');
     if (input === null) return;
     setBusy(u.id);
     try {
-      await axios.post(`${API_URL}/api/account/admin/users/${u.id}/paid`, { paidUntil: input.trim() || null });
+      if (input.trim() === '') {
+        await axios.post(`${API_URL}/api/account/admin/users/${u.id}/paid`, { indefinite: true });
+      } else if (Number.isNaN(new Date(input.trim()).getTime())) {
+        alert(`"${input}" isn't a date I can understand. Try YYYY-MM-DD, e.g. 2027-01-01.`);
+        return;
+      } else {
+        await axios.post(`${API_URL}/api/account/admin/users/${u.id}/paid`, { paidUntil: input.trim() });
+      }
       await load();
     } finally {
       setBusy(null);
@@ -150,7 +158,7 @@ export default function AdminUsers() {
                         {u.disabled ? (
                           <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
                         ) : u.hasAccess ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
+                          <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidIndefinite || u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-red-600"><XCircle className="w-3.5 h-3.5" /> Expired</span>
                         )}
@@ -178,7 +186,7 @@ export default function AdminUsers() {
                         {u.disabled ? (
                           <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
                         ) : u.hasAccess ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
+                          <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidIndefinite || u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-red-600"><XCircle className="w-3.5 h-3.5" /> Expired</span>
                         )}
@@ -187,7 +195,7 @@ export default function AdminUsers() {
                         <div className="flex gap-2 flex-wrap">
                           <button disabled={busy === u.id} onClick={() => startEdit(u)} className="text-xs font-semibold text-gray-600 hover:underline disabled:opacity-50 flex items-center gap-0.5"><Pencil className="w-3 h-3" /> Edit</button>
                           <button disabled={busy === u.id} onClick={() => markPaid(u)} className="text-xs font-semibold text-blue-600 hover:underline disabled:opacity-50">Mark paid…</button>
-                          {u.paidUntil !== null && (
+                          {(u.paidIndefinite || u.paidUntil !== null) && (
                             <button disabled={busy === u.id} onClick={() => revokePaid(u)} title="Back to trial-only access" className="text-xs font-semibold text-gray-500 hover:underline disabled:opacity-50 flex items-center gap-0.5"><RotateCcw className="w-3 h-3" /> Revert</button>
                           )}
                           <button disabled={busy === u.id} onClick={() => toggleDisabled(u)} className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50">

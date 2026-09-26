@@ -671,7 +671,7 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
 app.set('trust proxy', 1);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '20mb' }));
-registerAuthRoutes(app);
+registerAuthRoutes(app, db);
 
 // Current search results -> .xlsx. The browser already holds the filtered rows, so it sends them
 // as { columns: [{key,label}], rows: [{key: value}] } and gets a workbook back.
@@ -997,7 +997,7 @@ app.post('/api/market-snapshot.pdf', requireUser, rateLimit(60, 'Report limit re
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB — weekly Insider files are a few MB; this is headroom, not a soft cap
 
 // Create uploads directory if it doesn't exist
 const uploadDir = process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'uploads') : path.join(__dirname, '../../uploads');
@@ -1132,124 +1132,6 @@ app.post('/api/dates', requireAdmin, upload.single('file'), async (req: Request,
   }
 });
 
-// Search/Browse Excel data endpoint
-app.post('/api/search', upload.single('file'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    // Read the Excel file
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const firstSheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[firstSheetName];
-    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-
-    if (jsonData.length === 0) {
-      return res.status(400).json({ error: 'Excel file is empty' });
-    }
-
-    const headers = jsonData[0] as string[];
-    const dataRows = jsonData.slice(1);
-
-    // Helper to get column index
-    const getColIndex = (colName: string) => {
-      return headers.findIndex(h => h && h.trim() === colName);
-    };
-
-    // Helper to get cell value with date conversion
-    const getCellValue = (row: any[], colName: string) => {
-      const idx = getColIndex(colName);
-      if (idx === -1) return '';
-      const value = row[idx];
-      if (value === undefined || value === null) return '';
-      
-      // Convert Excel dates
-      if (typeof value === 'number' && (colName.includes('DATE') || colName.includes('Date'))) {
-        const excelDate = XLSX.SSF.parse_date_code(value);
-        if (excelDate) {
-          return `${String(excelDate.m).padStart(2, '0')}/${String(excelDate.d).padStart(2, '0')}/${excelDate.y}`;
-        }
-      }
-      
-      return colName === 'M1' ? String(value).trim() : properCase(String(value).trim());
-    };
-
-    // Extract all properties with relevant fields
-    const properties = dataRows.map((row, index) => ({
-      id: index,
-      propertyName: getCellValue(row, 'P NAME'),
-      city: getCellValue(row, 'P CITY'),
-      county: getCellValue(row, 'COUNTY'),
-      marketArea: getCellValue(row, 'MARKET AREA'),
-      insiderDate: getCellValue(row, 'INSIDER DATE'),
-      propertyType: getCellValue(row, 'P TYPE'),
-      salePrice: getCellValue(row, 'SALE PRICE'),
-      saleDate: getCellValue(row, 'SALE DATE'),
-      units: getCellValue(row, 'UNITS COMPLETED'),
-      address: `${getCellValue(row, 'P STREET NUMBER')} ${getCellValue(row, 'P STREET NAME')}`.trim(),
-      zip: getCellValue(row, 'P ZIP'),
-      taxOwner: getCellValue(row, 'TAX OWNER'),
-    })).filter(p => p.propertyName); // Only include rows with property names
-
-    // Extract unique filter options
-    const cities = [...new Set(properties.map(p => p.city).filter(Boolean))].sort();
-    const counties = [...new Set(properties.map(p => p.county).filter(Boolean))].sort();
-    const marketAreas = [...new Set(properties.map(p => p.marketArea).filter(Boolean))].sort();
-    const dates = [...new Set(properties.map(p => p.insiderDate).filter(Boolean))].sort().reverse();
-
-    // Get price range
-    const prices = properties
-      .map(p => parseFloat(p.salePrice?.replace(/[^0-9.-]/g, '') || '0'))
-      .filter(p => p > 0);
-    const priceRange = prices.length > 0 ? {
-      min: Math.min(...prices),
-      max: Math.max(...prices)
-    } : { min: 0, max: 0 };
-
-    // Get units range
-    const unitsValues = properties
-      .map(p => parseInt(p.units?.replace(/[^0-9]/g, '') || '0'))
-      .filter(u => u > 0);
-    const unitsRange = unitsValues.length > 0 ? {
-      min: Math.min(...unitsValues),
-      max: Math.max(...unitsValues)
-    } : { min: 0, max: 0 };
-
-    // Save to database
-    try {
-      const uploadId = saveUploadToDb(
-        req.file.originalname,
-        req.file.originalname,
-        req.file.size,
-        workbook.SheetNames.length,
-        jsonData,
-        req.body.database_type
-      );
-      console.log(`✅ Saved upload to database with ID: ${uploadId}`);
-    } catch (dbError) {
-      console.error('⚠️ Failed to save to database:', dbError);
-      // Continue even if DB save fails (non-blocking)
-    }
-
-    res.json({
-      properties,
-      filters: {
-        cities,
-        counties,
-        marketAreas,
-        dates,
-        priceRange,
-        unitsRange
-      },
-      total: properties.length
-    });
-
-  } catch (error) {
-    console.error('Error searching data:', error);
-    res.status(500).json({ error: 'Failed to search data' });
-  }
-});
 
 // Convert Excel to PDF using HTML template (Puppeteer)
 app.post('/api/convert-html', requireAdmin, upload.single('file'), async (req: Request, res: Response) => {
@@ -2078,6 +1960,54 @@ app.get('/api/uploads/:id', requireUser, (req: Request, res: Response) => {
 });
 
 // Get Excel data for a specific upload
+// Contact-level PII that a security review (Sep 25) flagged: the bulk property list was
+// sending it to any trial account in one request, when nothing about search, sorting or the
+// results table actually reads these — only the property page's Contacts section does, from
+// the archive (/api/dropbox/report), a completely separate, per-property endpoint. Built from
+// the real column list in a current weekly file, keyed by exact name so a generic phone/street
+// pattern can't accidentally also strip the property's own address (the "P ..." columns).
+const SENSITIVE_COLUMNS = new Set([
+  // Phone / fax, every party prefix (O=owner, S=seller, B=broker, L=lender, C L=construction
+  // lender, 2ND OWNER, LEASING, MANAGEMENT) plus the standalone ATTORNEY PHONE / FAX columns.
+  'O PHONE', 'O PHONE2 FAX', 'S PHONE', 'S PHONE2 FAX', 'B PHONE', 'B PHONE2 FAX', 'BROKER PHONE',
+  'L PHONE', 'L PHONE2 FAX', 'C L PHONE', 'C L PHONE2 FAX', 'LEASING PHONE', 'LEASING PHONE2',
+  'MANAGEMENT PHONE', 'MANAGEMENT PHONE2 FAX', '2ND OWNER PHONE', '2ND OWNER PHONE2 FAX',
+  'ATTORNEY PHONE', 'FAX',
+  // Individual rep names, every party prefix.
+  'O REP', 'O REP2', 'B REP', 'B REP2', 'S REP', 'S REP2', 'L REP', 'L REP2', 'C L REP', 'C L REP2',
+  'LEASING REP', 'LEASING REP2', 'MANAGEMENT REP', 'MANAGEMENT REP2', '2ND OWNER REP', '2ND OWNER REP2',
+  // Mailing addresses, every party prefix — the property's own address (the "P ..." columns)
+  // is a different, separate set of columns and is never in this list.
+  'O STREET NAME', 'O STREET NUMBER', 'O CITY', 'O STATE', 'O ZIP', 'O SUITE NUMBER', 'O P O BOX NUMBER',
+  'B STREET NAME', 'B STREET NUMBER', 'B CITY', 'B STATE', 'B ZIP', 'B SUITE NUMBER', 'B P O BOX NUMBER',
+  'S STREET NAME', 'S STREET NUMBER', 'S CITY', 'S STATE', 'S ZIP', 'S SUITE NUMBER', 'S P O BOX NUMBER',
+  'L STREET NAME', 'L STREET NUMBER', 'L CITY', 'L STATE', 'L ZIP', 'L SUITE NUMBER', 'L P O BOX NUMBER',
+  'C L STREET NAME', 'C L STREET NUMBER', 'C L CITY', 'C L STATE', 'C L ZIP', 'C L SUITE NUMBER', 'C L P O BOX NUMBER',
+  'LEASING STREET NAME', 'LEASING STREET NUMBER', 'LEASING CITY', 'LEASING STATE', 'LEASING ZIP', 'LEASING SUITE NUMBER', 'LEASING P O BOX NUMBER',
+  'MANAGEMENT STREET NAME', 'MANAGEMENT STREET NUMBER', 'MANAGEMENT CITY', 'MANAGEMENT STATE', 'MANAGEMENT ZIP', 'MANAGEMENT SUITE NUMBER', 'MANAGEMENT P O BOX NUMBER',
+  '2ND OWNER STREET NAME', '2ND OWNER STREET NUMBER', '2ND OWNER CITY', '2ND OWNER STATE', '2ND OWNER ZIP', '2ND OWNER SUITE NUMBER', '2ND OWNER P O BOX NUMBER',
+  // Financing specifics beyond the loan amount already shown on the property page.
+  'EQUITY', 'PERCENTAGE EQUITY', 'DOWNPAYMENT', 'PERCENTAGE DOWNPAYMENT', 'YEARLY INCOME', 'ASSUMED LOAN',
+  'LOAN PER SQ FT', 'C LOAN PER SQ FT', 'LOAN START DATE', 'LOAN COMPLETE DATE', 'LOAN TERMS',
+  'C LOAN START DATE', 'C LOAN COMPLETE DATE', 'C LOAN TERMS', 'FORECLOSURE DATE', 'FORECLOSED PRICE',
+  'EXISTING PERMANENT LOAN', 'EXISTING CONSTRUCITON LOAN', 'PURCHASE NOTE', 'PURCHASE NOTE START DATE', 'PURCHASE NOTE DUE DATE',
+  // Attorney and a named point-of-contact field. ATTENTION/ATTENTION2 are deliberately NOT
+  // included here — UserDashboard.tsx's name search matches against them (nameMatch), so
+  // stripping them would silently break "find by attention line" searches for a name that's
+  // no more sensitive than the OWNER field already shown.
+  'ATTORNEY', 'KEY PLAYER',
+]);
+
+// Strips SENSITIVE_COLUMNS from a header+rows array (mutating neither; returns new arrays),
+// keeping every remaining column's position stable relative to each other so nothing downstream
+// that looks columns up by name (not by fixed index) needs to change.
+function stripSensitiveColumns(data: unknown[][]): unknown[][] {
+  if (data.length === 0) return data;
+  const header = data[0] as string[];
+  const keepIdx = header.map((h, i) => (SENSITIVE_COLUMNS.has(String(h ?? '').trim().toUpperCase()) ? -1 : i)).filter((i) => i >= 0);
+  return data.map((row) => keepIdx.map((i) => row[i]));
+}
+
 app.get('/api/uploads/:id/data', requireUser, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
@@ -2090,7 +2020,7 @@ app.get('/api/uploads/:id/data', requireUser, (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Upload not found' });
     }
     
-    const excelData = getExcelDataFromDb(id);
+    const excelData = stripSensitiveColumns(getExcelDataFromDb(id));
     
     res.json({
       upload,

@@ -1,4 +1,5 @@
-import { ASK_QUESTIONS, fixCentury, isTestRecord } from './dropbox';
+import * as XLSX from 'xlsx';
+import { ASK_QUESTIONS, excelToCsv, fixCentury, isTestRecord, parseCsv } from './dropbox';
 
 describe('isTestRecord', () => {
   it("drops Reflex's all-ones test record, as text or as a number", () => {
@@ -29,5 +30,37 @@ describe('fixCentury', () => {
 describe('ASK_QUESTIONS', () => {
   it('includes sold_once for "sold and never resold" questions', () => {
     expect(ASK_QUESTIONS).toContain('sold_once');
+  });
+});
+
+describe('excelToCsv', () => {
+  // Shaped like a Reflex Excel export: a title row, a blank first column, real date cells.
+  const workbook = (bookType: XLSX.BookType) => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['IND'],
+      ['', 'P NAME', 'P CITY', 'SALE DATE', 'SALE PRICE', 'M1'],
+      ['', 'CROSSGATE, BLDG 2', 'PORT WENTWORTH', new Date('2024-03-08T00:00:00Z'), 1399900, 'line one\nsaid "sold"'],
+      [],
+      ['', 'BISHOP ST', 'ATLANTA', '', 17.464000000000002, ''],
+    ], { cellDates: true, dateNF: 'mm/dd/yyyy' });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'IND');
+    return XLSX.write(wb, { type: 'buffer', bookType }) as Buffer;
+  };
+
+  it.each(['xlsx', 'biff8'] as XLSX.BookType[])('turns a %s export into the weekly CSV shape', (bookType) => {
+    const out = excelToCsv(workbook(bookType))!;
+    expect(out.rows).toBe(2);
+    expect(parseCsv(out.csv)).toEqual([
+      ['P NAME', 'P CITY', 'SALE DATE', 'SALE PRICE', 'M1'],
+      ['CROSSGATE, BLDG 2', 'PORT WENTWORTH', '2024-03-08', '1399900', 'line one\nsaid "sold"'],
+      ['BISHOP ST', 'ATLANTA', '', '17.464000000000002', ''],
+    ]);
+  });
+
+  it('returns null when there is no P NAME header', () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['something else']]), 'S');
+    expect(excelToCsv(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))).toBeNull();
   });
 });

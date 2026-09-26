@@ -2,6 +2,7 @@ import { gunzipSync } from 'zlib';
 import nodePath from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { Express, Request, Response } from 'express';
+import * as XLSX from 'xlsx';
 import { requireUser } from './users';
 
 // Property Search over the Dropbox archive. The weekly Reflex zips in
@@ -212,6 +213,116 @@ export async function uploadWeek(week: string, files: WeekFile[]): Promise<{ wee
   summaryCache = null;
   for (const t of Object.keys(counts)) rowsCache.delete(`${week}/${t}`);
   return { week, files: counts };
+}
+
+// ---------- Backup: build a missing week's CSVs from the Excel exports ----------
+// The zip→CSV job (tools/rxd/dropbox_sync.py) is the normal path. If a week's datafile folder
+// has been sitting in Dropbox for a while with no CSVs written for it, the Excel exports saved
+// next to the Reflex files (APTS.xls, IND_09_23_2026 (1).xlsx, …) carry the same columns, so the
+// site converts those itself rather than keep showing last week.
+
+const DATAFILE_ROOT = '/GrooveSolutions/Databank/_archive/_datafile';
+const EXPORT_TYPES = [...new Set(DATABASES.map((d) => d.type))];
+const BACKUP_AFTER_MS = 6 * 60 * 60 * 1000; // give the normal job this long first
+
+type Entry = { '.tag': string; name: string; path_lower: string; server_modified?: string };
+
+async function listFolder(path: string): Promise<Entry[]> {
+  const token = await accessToken();
+  const call = async (endpoint: string, body: object) => {
+    const res = await fetch(`https://api.dropboxapi.com/2/files/${endpoint}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`Dropbox list failed (${res.status})`);
+    return (await res.json()) as { entries: Entry[]; cursor: string; has_more: boolean };
+  };
+  let page = await call('list_folder', { path, limit: 2000 });
+  const entries = [...page.entries];
+  while (page.has_more) {
+    page = await call('list_folder/continue', { cursor: page.cursor });
+    entries.push(...page.entries);
+  }
+  return entries;
+}
+
+function csvCell(v: string): string {
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+// One Reflex Excel export -> CSV in the same shape as the converted weekly files: the header row
+// is the one holding "P NAME" (exports can have a title row and a blank first column above/left
+// of it), dates become YYYY-MM-DD, and blank rows are dropped.
+export function excelToCsv(buf: Buffer): { csv: string; rows: number } | null {
+  const wb = XLSX.read(buf, { cellNF: true }); // keep number formats so date cells can be told apart
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws || !ws['!ref']) return null;
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const text = (r: number, c: number): string => {
+    const cell = ws[XLSX.utils.encode_cell({ r, c })] as XLSX.CellObject | undefined;
+    if (!cell || cell.v === undefined || cell.v === null) return '';
+    if (cell.t === 'n' && cell.z && XLSX.SSF.is_date(cell.z)) return XLSX.SSF.format('yyyy-mm-dd', cell.v as number);
+    if (cell.t === 'd' && cell.v instanceof Date) return cell.v.toISOString().slice(0, 10);
+    return String(cell.v);
+  };
+  let headerRow = -1, firstCol = -1;
+  for (let r = range.s.r; r <= Math.min(range.e.r, range.s.r + 20) && headerRow < 0; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      if (text(r, c).trim() === 'P NAME') { headerRow = r; firstCol = c; break; }
+    }
+  }
+  if (headerRow < 0) return null;
+  let lastCol = range.e.c;
+  while (lastCol > firstCol && !text(headerRow, lastCol).trim()) lastCol--;
+  const lines: string[] = [];
+  for (let r = headerRow; r <= range.e.r; r++) {
+    const row: string[] = [];
+    for (let c = firstCol; c <= lastCol; c++) row.push(r === headerRow ? text(r, c).trim() : text(r, c));
+    if (r > headerRow && row.every((v) => !v.trim())) continue;
+    lines.push(row.map(csvCell).join(','));
+  }
+  return { csv: lines.join('\n') + '\n', rows: lines.length - 1 };
+}
+
+// Newest datafile_MM_DD_YYYY folder as YYYY-MM-DD.
+function folderWeek(name: string): string | null {
+  const m = /^datafile_(\d{2})_(\d{2})_(\d{4})$/i.exec(name);
+  return m ? `${m[3]}-${m[1]}-${m[2]}` : null;
+}
+
+export async function backfillWeekFromExcel(force = false): Promise<{ week: string; files: Record<string, number> } | null> {
+  if (process.env.DROPBOX_LOCAL_CSV_ROOT) return null;
+  const folders = (await listFolder(DATAFILE_ROOT))
+    .filter((e) => e['.tag'] === 'folder' && folderWeek(e.name))
+    .sort((a, b) => folderWeek(a.name)!.localeCompare(folderWeek(b.name)!));
+  const newest = folders[folders.length - 1];
+  if (!newest) return null;
+  const week = folderWeek(newest.name)!;
+
+  const res = await download(`${CSV_ROOT}/manifest.json`);
+  const m: Manifest = res ? ((await res.json()) as Manifest) : { weeks: {} };
+  if (Object.keys(m.weeks[week]?.files ?? {}).length > 0) return null; // already converted
+
+  const entries = (await listFolder(newest.path_lower)).filter((e) => e['.tag'] === 'file');
+  const lastUpload = Math.max(0, ...entries.map((e) => Date.parse(e.server_modified ?? '') || 0));
+  if (!force && Date.now() - lastUpload < BACKUP_AFTER_MS) return null;
+
+  const files: WeekFile[] = [];
+  for (const type of EXPORT_TYPES) {
+    const re = new RegExp(`^${type}(?:_\\d{2}_\\d{2}_\\d{4})?(?:\\s*\\(\\d+\\))?\\.xlsx?$`, 'i');
+    const match = entries.filter((e) => re.test(e.name)).sort((a, b) => (b.server_modified ?? '').localeCompare(a.server_modified ?? ''))[0];
+    if (!match) continue;
+    const dl = await download(match.path_lower);
+    if (!dl) continue;
+    const converted = excelToCsv(Buffer.from(await dl.arrayBuffer()));
+    if (converted && converted.rows > 0) files.push({ type, body: Buffer.from(converted.csv, 'utf8') });
+    else console.error(`Excel backup: ${match.name} has no "P NAME" header row, skipped`);
+  }
+  if (!files.length) return null;
+  const result = await uploadWeek(week, files);
+  console.log(`✅ Excel backup: built ${week} from the Excel exports`, result.files);
+  return result;
 }
 
 // ---------- Latest week as an Excel-shaped sheet (feeds the uploads table) ----------

@@ -7,7 +7,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
-import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, isTestRecord, DATABASES } from './dropbox';
+import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, backfillWeekFromExcel, isTestRecord, DATABASES } from './dropbox';
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
@@ -2152,7 +2152,9 @@ async function syncDatabaseFromDropbox(databaseType: string): Promise<DropboxSyn
   }
 }
 
-async function syncAllDatabasesFromDropbox(): Promise<DropboxSyncResult[]> {
+async function syncAllDatabasesFromDropbox(forceExcelBackup = false): Promise<DropboxSyncResult[]> {
+  // A week uploaded to Dropbox but never converted to CSV gets built from its Excel exports.
+  await backfillWeekFromExcel(forceExcelBackup).catch((e: unknown) => console.error('Excel backup failed:', e instanceof Error ? e.message : e));
   const results: DropboxSyncResult[] = [];
   for (const type of DATABASE_TYPES) results.push(await syncDatabaseFromDropbox(type));
   return results;
@@ -2162,7 +2164,7 @@ app.post('/api/databases/sync-dropbox', requireAdmin, async (req: Request, res: 
   if (!dropboxConfigured()) {
     return res.status(400).json({ error: 'Dropbox is not configured (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN)' });
   }
-  res.json({ results: await syncAllDatabasesFromDropbox() });
+  res.json({ results: await syncAllDatabasesFromDropbox(true) });
 });
 
 // Push one week's converted CSVs (APTS.csv, IND.csv, …) into the Dropbox archive by hand — for when the
@@ -3046,7 +3048,7 @@ const server = app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
   if (dropboxConfigured()) {
     syncAllDatabasesFromDropbox();
-    setInterval(syncAllDatabasesFromDropbox, DROPBOX_SYNC_MS);
+    setInterval(() => syncAllDatabasesFromDropbox(), DROPBOX_SYNC_MS);
   } else {
     console.log('Dropbox not configured — databases stay on manual uploads');
   }

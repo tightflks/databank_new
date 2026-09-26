@@ -111,7 +111,7 @@ export default function LoginModal({ onClose, onAuthed, trialEndedFor, resetToke
         <button onClick={onClose} aria-label="Close" className="absolute top-4 right-4 text-gray-400 hover:text-gray-700"><X className="w-5 h-5" /></button>
         <div className="flex items-center gap-3 mb-1">
           <span className="w-10 h-10 rounded-lg bg-db-navy text-white flex items-center justify-center"><Lock className="w-5 h-5" /></span>
-          <h2 className="font-serif font-semibold text-xl text-db-ink m-0">Research Database</h2>
+          <h2 className="font-bold tracking-tight text-xl text-db-ink m-0">Research Database</h2>
         </div>
 
         {view === 'verify-pending' ? (

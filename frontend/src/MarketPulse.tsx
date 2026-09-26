@@ -62,7 +62,7 @@ function VolumeChart({ quarters }: { quarters: Stats['quarters'] }) {
   const liveQ = currentQuarterLabel();
   return (
     <div className="bg-white border border-db-border rounded-2xl p-6">
-      <div className="flex items-center gap-2 mb-1"><TrendingUp className="w-5 h-5 text-db-navy" /><h3 className="font-serif font-semibold text-lg text-db-ink m-0">Atlanta sales volume by quarter</h3></div>
+      <div className="flex items-center gap-2 mb-1"><TrendingUp className="w-5 h-5 text-db-navy" /><h3 className="font-bold tracking-tight text-lg text-db-ink m-0">Atlanta sales volume by quarter</h3></div>
       <p className="text-xs text-db-muted mb-5">All five databases · sale price of reported transactions</p>
       <div className="flex items-end gap-2">
         {quarters.map((q) => {

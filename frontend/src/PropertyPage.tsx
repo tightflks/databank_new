@@ -59,9 +59,9 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
     try {
       const { data } = await axios.get(`${API_URL}/api/dropbox/report/notes-ai`, { params: { type, id } });
       if (data.cleaned) setNotesAi(data);
-      else setNotesAiError("Couldn't build a cleaned-up version for this one — the original above is still complete.");
+      else setNotesAiError("Couldn't build a plain-English version for this one — the original notes below are complete.");
     } catch {
-      setNotesAiError("Couldn't build a cleaned-up version right now — the original above is still complete.");
+      setNotesAiError("Couldn't build a plain-English version right now — the original notes below are complete.");
     } finally {
       setNotesAiLoading(false);
     }
@@ -82,6 +82,13 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
       });
     return () => ctrl.abort();
   }, [type, id]);
+
+  // Reflex notes are all-caps shorthand ("BROKER:UNKNOWN;LAST SALE:9/18/20($2.875M…"), so the
+  // plain-English version loads on its own and leads; it's cached per property after the first view.
+  useEffect(() => {
+    if (r?.comments && !notesAi && !notesAiLoading && !notesAiError) fetchNotesAi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [r]);
 
   const downloadPdf = async () => {
     if (downloading || !r) return;
@@ -162,10 +169,10 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
         <div className="flex flex-col gap-3">
           <div className="flex gap-2 flex-wrap">
             <span className="text-xs font-semibold bg-db-tint text-db-navy px-2.5 py-1 rounded-full">{r.type}</span>
-            {last && <span className="text-xs font-semibold bg-db-tint text-db-navy px-2.5 py-1 rounded-full num">Sold {last.date}</span>}
+            {last && <span className="text-xs font-semibold bg-db-tint text-db-navy px-2.5 py-1 rounded-full num">Sold {fmtDate(last.date)}</span>}
             {r.removed && <span className="text-xs font-semibold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full">No longer on the current list</span>}
           </div>
-          <h1 className="font-serif font-semibold text-3xl sm:text-4xl leading-tight text-db-ink m-0">{titleCase(r.name) || '(unnamed property)'}</h1>
+          <h1 className="font-bold tracking-tight text-3xl sm:text-4xl leading-tight text-db-ink m-0">{titleCase(r.name) || '(unnamed property)'}</h1>
           {r.formerNames.length > 0 && (
             <div className="text-sm text-db-subtle">Formerly {r.formerNames.map(titleCase).join(' · ')}</div>
           )}
@@ -193,8 +200,8 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
           {last ? (
             <p className="text-sm leading-relaxed">
               {sameOwner
-                ? <><b>{titleCase(r.name)}</b> was last recorded on <b className="num">{last.date}</b>{last.price ? <> at <b className="num">{money(last.price)}</b></> : null}, staying with <b>{titleCase(last.buyer)}</b> (a transfer or refinancing, not a change of owner).</>
-                : <><b>{titleCase(r.name)}</b> last sold on <b className="num">{last.date}</b>{last.price ? <> for <b className="num">{money(last.price)}</b></> : ' (price not on record)'}{last.buyer ? <> to <b>{titleCase(last.buyer)}</b></> : null}{last.seller ? <>, purchased from {titleCase(last.seller)}</> : null}.</>}
+                ? <><b>{titleCase(r.name)}</b> was last recorded on <b className="num">{fmtDate(last.date)}</b>{last.price ? <> at <b className="num">{money(last.price)}</b></> : null}, staying with <b>{titleCase(last.buyer)}</b> (a transfer or refinancing, not a change of owner).</>
+                : <><b>{titleCase(r.name)}</b> last sold on <b className="num">{fmtDate(last.date)}</b>{last.price ? <> for <b className="num">{money(last.price)}</b></> : ' (price not on record)'}{last.buyer ? <> to <b>{titleCase(last.buyer)}</b></> : null}{last.seller ? <>, purchased from {titleCase(last.seller)}</> : null}.</>}
               {r.saleList.length > 1 ? ` Databank has ${r.saleList.length} sales on record for this property.` : ''}
             </p>
           ) : <p className="text-sm text-db-muted">No sale on record for this property.</p>}
@@ -203,7 +210,7 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
               <thead><tr className="text-left text-[11px] uppercase tracking-wide text-db-muted"><th className="py-1 pr-3 font-semibold">Date</th><th className="py-1 pr-3 font-semibold">Price</th><th className="py-1 pr-3 font-semibold">Buyer</th><th className="py-1 font-semibold">Seller</th></tr></thead>
               <tbody className="divide-y divide-db-border">
                 {sales.map((s, i) => (
-                  <tr key={i}><td className="py-1.5 pr-3 whitespace-nowrap num">{s.date}</td><td className="py-1.5 pr-3 whitespace-nowrap font-semibold num">{money(s.price)}</td><td className="py-1.5 pr-3">{titleCase(s.buyer) || '—'}</td><td className="py-1.5">{titleCase(s.seller) || '—'}</td></tr>
+                  <tr key={i}><td className="py-1.5 pr-3 whitespace-nowrap num">{fmtDate(s.date)}</td><td className="py-1.5 pr-3 whitespace-nowrap font-semibold num">{money(s.price)}</td><td className="py-1.5 pr-3">{titleCase(s.buyer) || '—'}</td><td className="py-1.5">{titleCase(s.seller) || '—'}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -244,27 +251,21 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
         <SectionCard id="notes" title="Research Notes &amp; History">
           {r.comments ? (
             <>
-              <div className="bg-db-cream rounded-lg px-4 py-3 text-sm leading-relaxed text-db-subtle whitespace-pre-line">
-                <span className="block text-[11px] font-semibold text-db-muted mb-1 uppercase tracking-wide">Original researcher notes</span>
-                {r.comments}
-              </div>
               {notesAi ? (
-                <div className="border border-db-border rounded-lg px-4 py-3">
-                  <span className="block text-[11px] font-semibold text-db-navy mb-1 uppercase tracking-wide">Cleaned up by AI</span>
-                  {notesAi.summary && <p className="text-sm font-semibold text-db-ink mb-1">{notesAi.summary}</p>}
-                  <p className="text-sm leading-relaxed text-db-subtle whitespace-pre-line m-0">{notesAi.cleaned}</p>
+                <div>
+                  {notesAi.summary && <p className="text-[15px] font-semibold text-db-ink mb-1.5">{notesAi.summary}</p>}
+                  <p className="text-sm leading-relaxed text-db-text whitespace-pre-line m-0">{notesAi.cleaned}</p>
+                  <p className="text-[11px] text-db-muted mt-2 mb-0">Rewritten in plain English by AI from the researcher notes below — check the original for exact figures.</p>
                 </div>
-              ) : (
-                <button
-                  onClick={fetchNotesAi}
-                  disabled={notesAiLoading}
-                  className="self-start inline-flex items-center gap-2 text-sm font-semibold text-db-navy hover:underline disabled:opacity-60"
-                >
-                  {notesAiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  {notesAiLoading ? 'Cleaning up the notes…' : 'Show a cleaner, plain-English version'}
-                </button>
-              )}
-              {notesAiError && <p className="text-xs text-db-muted">{notesAiError}</p>}
+              ) : notesAiLoading ? (
+                <p className="inline-flex items-center gap-2 text-sm text-db-muted m-0"><Loader2 className="w-4 h-4 animate-spin" /> Writing a plain-English version of the notes…</p>
+              ) : notesAiError ? (
+                <p className="text-xs text-db-muted m-0">{notesAiError}</p>
+              ) : null}
+              <details className="group bg-db-cream rounded-lg px-4 py-3" open={!notesAi && !notesAiLoading}>
+                <summary className="cursor-pointer text-[11px] font-semibold text-db-muted uppercase tracking-wide select-none">Original researcher notes</summary>
+                <div className="mt-2 text-sm leading-relaxed text-db-subtle whitespace-pre-line break-words">{r.comments}</div>
+              </details>
             </>
           ) : <p className="text-sm text-db-muted">No researcher notes on record.</p>}
         </SectionCard>
@@ -288,7 +289,7 @@ export default function PropertyPage({ type, id, onBack, admin }: { type: string
       </div>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-8 pb-10 text-xs text-db-muted">
-        Data as of the Insider week of {r.last} · every sale verified by Databank research staff · Source: Databank Atlanta research.
+        Data as of the Insider week of {fmtDate(r.last)} · every sale verified by Databank research staff · Source: Databank Atlanta research.
       </div>
     </div>
   );

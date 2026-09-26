@@ -5,6 +5,9 @@ import {
   Briefcase, Loader2, CheckCircle, ArrowRight
 } from 'lucide-react';
 import MarketPulse, { useStats, money, weekLabel } from './MarketPulse';
+import { titleCase } from './utils/fmt';
+
+const TYPE_LABEL: Record<string, string> = { APTS: 'Apartments', IND: 'Industrial', LANDSALE: 'Land', OFFSHOP: 'Office & retail', FRANCHIS: 'Retail' };
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
@@ -110,7 +113,7 @@ export default function Home({ onStart }: Props) {
       <section className="grid lg:grid-cols-[7fr,5fr] gap-10 items-start">
         <div className="flex flex-col gap-6">
           <div className="text-xs font-semibold tracking-widest uppercase text-db-goldText">Atlanta commercial real estate · Researched since 1970</div>
-          <h1 className="font-serif font-semibold text-4xl sm:text-5xl leading-tight text-db-ink m-0">
+          <h1 className="font-bold tracking-tight text-4xl sm:text-5xl leading-tight text-db-ink m-0">
             Every Atlanta commercial sale, verified by people who know the market.
           </h1>
           <p className="text-lg text-db-subtle max-w-xl m-0">
@@ -163,8 +166,8 @@ export default function Home({ onStart }: Props) {
               {tw.biggest && (
                 <div className="px-6 py-5 flex flex-col gap-1 border-b border-db-border">
                   <div className="text-xs font-semibold tracking-wide uppercase text-db-goldText">Largest sale</div>
-                  <div className="text-lg font-semibold text-db-ink">{tw.biggest.name || '(unnamed property)'}</div>
-                  <div className="text-sm text-db-muted num">{tw.biggest.city} · {tw.biggest.type} · {money(tw.biggest.price)}</div>
+                  <div className="text-lg font-semibold text-db-ink">{titleCase(tw.biggest.name) || '(unnamed property)'}</div>
+                  <div className="text-sm text-db-muted num">{titleCase(tw.biggest.city)} · {TYPE_LABEL[tw.biggest.type] ?? tw.biggest.type} · {money(tw.biggest.price)}</div>
                 </div>
               )}
             </>
@@ -202,7 +205,7 @@ export default function Home({ onStart }: Props) {
         <img src="/alan-wexler.jpg" alt="Alan Wexler, Databank president" className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover mx-auto md:mx-0" />
         <div>
           <p className="uppercase tracking-widest text-xs text-db-muted mb-1">A note from our president</p>
-          <h2 className="font-serif font-semibold text-2xl text-db-ink mb-4">Alan Wexler</h2>
+          <h2 className="font-bold tracking-tight text-2xl text-db-ink mb-4">Alan Wexler</h2>
           <div className="space-y-3 text-db-subtle leading-relaxed">
             <p>
               Databank was founded in 1970 to provide pertinent data on the real estate market to the businesses and firms directly
@@ -244,7 +247,7 @@ export default function Home({ onStart }: Props) {
       <section id="contact" className="scroll-mt-24 grid lg:grid-cols-2 gap-6">
         <div className="bg-white border border-db-border rounded-2xl p-6 sm:p-8">
           <p className="uppercase tracking-widest text-xs text-db-muted mb-1">Get in touch</p>
-          <h2 className="font-serif font-semibold text-2xl text-db-ink mb-4">Contact Databank</h2>
+          <h2 className="font-bold tracking-tight text-2xl text-db-ink mb-4">Contact Databank</h2>
           <ContactForm />
         </div>
         <div className="rounded-2xl overflow-hidden border border-db-border flex flex-col">

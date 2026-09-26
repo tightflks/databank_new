@@ -8,7 +8,6 @@ export default {
     extend: {
       fontFamily: {
         sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
-        serif: ['"Source Serif 4"', 'Georgia', 'serif'],
       },
       colors: {
         // "Bloomberg terminal with Atlanta roots" — one navy, one gold accent, warm neutrals.

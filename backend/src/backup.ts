@@ -30,6 +30,11 @@ export async function backupDatabase(db: { backup: (dest: string) => Promise<unk
     try {
       copy.exec("DELETE FROM excel_data WHERE upload_id IN (SELECT id FROM uploads WHERE filename LIKE 'dropbox:%')");
     } catch { /* no uploads tables (tests) */ }
+    // Live sign-in and reset tokens don't belong in a file that sits in Dropbox; after a restore
+    // everyone just signs in again.
+    for (const table of ['sessions', 'email_tokens']) {
+      try { copy.exec(`DELETE FROM ${table}`); } catch { /* table not there */ }
+    }
     copy.exec('VACUUM');
     copy.close();
     await pipeline(fs.createReadStream(tmp), createGzip(), fs.createWriteStream(`${tmp}.gz`));

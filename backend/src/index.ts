@@ -2,9 +2,10 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import multer from 'multer';
 import cors from 'cors';
+import helmet from 'helmet';
 import * as XLSX from 'xlsx';
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
-import puppeteer from 'puppeteer';
+import puppeteer, { type Browser, type Page } from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
 import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, backfillWeekFromExcel, isTestRecord, DATABASES } from './dropbox';
@@ -675,6 +676,10 @@ function generatePropertyReportHTML(properties: any[], fieldMapping: any): strin
 
 // Middleware
 app.set('trust proxy', 1);
+// Standard security headers (HSTS, nosniff, frame and referrer policy). No content security
+// policy yet: the pages load Google Fonts, Google Maps embeds and inline styles, which need a
+// tested allowlist first.
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, referrerPolicy: { policy: 'strict-origin-when-cross-origin' } }));
 // Restricted to known domains rather than reflecting any origin (a Sep 25 security review
 // flagged cors({ origin: true }) as letting any website make credentialed requests on a
 // logged-in user's behalf). ALLOWED_ORIGINS lets this be extended without a code change once
@@ -851,12 +856,53 @@ function chromiumPath(): string | undefined {
   return undefined;
 }
 
-function launchBrowser() {
-  return puppeteer.launch({
-    headless: true,
-    executablePath: chromiumPath(),
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
+// One Chromium shared by every PDF route (it used to start a new one per report), and at most
+// MAX_PDF_RENDERS pages rendering at once so a busy moment can't exhaust the server's memory.
+// launchBrowser() hands out a handle; close() closes only that request's pages and frees its slot.
+const MAX_PDF_RENDERS = 3;
+let sharedBrowser: Promise<Browser> | null = null;
+let activeRenders = 0;
+const renderQueue: (() => void)[] = [];
+
+function getSharedBrowser(): Promise<Browser> {
+  if (!sharedBrowser) {
+    const launching = puppeteer.launch({
+      headless: true,
+      executablePath: chromiumPath(),
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+    sharedBrowser = launching;
+    launching.then((b) => b.on('disconnected', () => { if (sharedBrowser === launching) sharedBrowser = null; }))
+      .catch(() => { if (sharedBrowser === launching) sharedBrowser = null; });
+  }
+  return sharedBrowser;
+}
+
+async function launchBrowser(): Promise<{ newPage: () => Promise<Page>; close: () => Promise<void> }> {
+  if (activeRenders >= MAX_PDF_RENDERS) await new Promise<void>((resolve) => renderQueue.push(resolve));
+  activeRenders++;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    clearTimeout(safety);
+    activeRenders--;
+    renderQueue.shift()?.();
+  };
+  const safety = setTimeout(release, 3 * 60 * 1000); // a route that throws before close() can't hold a slot forever
+  const pages: Page[] = [];
+  try {
+    const browser = await getSharedBrowser();
+    return {
+      newPage: async () => { const page = await browser.newPage(); pages.push(page); return page; },
+      close: async () => {
+        try { await Promise.all(pages.map((pg) => pg.close().catch(() => undefined))); } finally { release(); }
+      },
+    };
+  } catch (e) {
+    release();
+    throw e;
+  }
 }
 
 const ASK_AI_PER_HOUR = Number(process.env.ASK_AI_PER_HOUR) || 30;
@@ -1344,7 +1390,7 @@ app.post('/api/convert-html', requireAdmin, upload.single('file'), async (req: R
     const browser = await launchBrowser();
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'load' });
     
     const pdfBuffer = await page.pdf({
       format: 'A4',
@@ -2774,7 +2820,7 @@ app.post('/api/uploads/:id/generate-pdf', requireAdmin, async (req: Request, res
 
     const browser = await launchBrowser();
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'load' });
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
@@ -2951,7 +2997,7 @@ app.post('/api/reports/:id/regenerate-pdf', requireAdmin, async (req: Request, r
     const browser = await launchBrowser();
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'load' });
     
     const pdfBuffer = await page.pdf({
       format: 'A4',

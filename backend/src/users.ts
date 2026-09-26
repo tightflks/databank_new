@@ -187,6 +187,23 @@ export function usersConfigured(): boolean {
 // For endpoints that stay open to logged-out visitors but should auto-attach the sender's
 // email when one is available — feedback submissions, for instance ("once users have to log
 // in, this happens automatically" per the written list). Never throws, never blocks.
+// Per-account daily cap (UTC day), for routes that hand out a property's full record: stops one
+// account scripting its way through every property's contacts. Admins are exempt.
+export function perUserDailyLimit(maxPerDay: number, what: string) {
+  const counts = new Map<string, number>();
+  let day = '';
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (isAdmin(req)) return next();
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== day) { day = today; counts.clear(); }
+    const who = currentUserEmail(req) ?? `ip:${req.ip}`;
+    const n = (counts.get(who) ?? 0) + 1;
+    if (n > maxPerDay) return res.status(429).json({ error: `${what} (${maxPerDay} a day). It resets at midnight UTC, or call Databank if you need more.` });
+    counts.set(who, n);
+    next();
+  };
+}
+
 export function currentUserEmail(req: Request): string | null {
   if (!db_) return null;
   const token = readCookie(req, COOKIE);

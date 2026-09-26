@@ -3,7 +3,7 @@ import nodePath from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { Express, Request, Response } from 'express';
 import * as XLSX from 'xlsx';
-import { requireUser } from './users';
+import { requireUser, perUserDailyLimit } from './users';
 
 // Property Search over the Dropbox archive. The weekly Reflex zips in
 // _archive/_datafile are converted to CSV by the sync job in the tareq-dashboard
@@ -887,7 +887,7 @@ export function registerDropboxRoutes(app: Express) {
   });
 
   // Customer-readable report for one property: ?type=APTS&id=APTS-01234
-  app.get('/api/dropbox/report', requireUser, async (req: Request, res: Response) => {
+  app.get('/api/dropbox/report', requireUser, perUserDailyLimit(200, 'Daily property report limit reached'), async (req: Request, res: Response) => {
     const type = str(req.query.type);
     const id = str(req.query.id);
     if (!TYPE.test(type) || !ID.test(id)) return res.status(400).json({ error: 'type and id are required' });

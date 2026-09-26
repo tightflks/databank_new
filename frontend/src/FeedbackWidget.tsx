@@ -40,6 +40,9 @@ export default function FeedbackWidget({ userEmail }: Props) {
     reader.readAsDataURL(file);
   };
 
+  // Blake, Sep 24: require an email with feedback so every note can be answered.
+  const contactIsEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.trim());
+
   const submit = async () => {
     if (!message.trim() || sending) return;
     setSending(true);
@@ -87,11 +90,12 @@ export default function FeedbackWidget({ userEmail }: Props) {
                 <p className="text-xs text-db-muted mt-2">Sending as <span className="font-medium text-db-text">{userEmail}</span> — we'll reply there.</p>
               ) : (
                 <input
-                  type="text"
+                  type="email"
+                  required
                   value={contact}
                   onChange={(e) => setContact(e.target.value)}
                   maxLength={200}
-                  placeholder="Your name or email (optional)"
+                  placeholder="Your email (so we can reply)"
                   className="w-full mt-2 border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-db-navy/40 focus:border-db-navy"
                 />
               )}
@@ -110,7 +114,7 @@ export default function FeedbackWidget({ userEmail }: Props) {
               {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
               <button
                 onClick={submit}
-                disabled={!message.trim() || sending}
+                disabled={!message.trim() || sending || (!userEmail && !contactIsEmail)}
                 className="mt-3 w-full py-2 rounded-lg bg-db-navy text-white text-sm font-semibold hover:bg-db-navyLight disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {sending && <Loader2 className="w-4 h-4 animate-spin" />} Send

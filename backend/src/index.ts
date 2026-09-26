@@ -787,6 +787,10 @@ app.post('/api/feedback', rateLimit(20, 'Feedback limit reached ({n} an hour)'),
   // Once someone's logged in, their email is attached automatically — no more asking for
   // "your name or email (optional)" and hoping they fill it in.
   const email = currentUserEmail(req);
+  // Signed out, a reply address is required (Blake, Sep 24: every note should be answerable).
+  if (!email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(clip(contact, 200) ?? ''))) {
+    return res.status(400).json({ error: 'Please include your email so we can reply.' });
+  }
   let screenshotBuf: Buffer | null = null;
   if (typeof screenshot === 'string' && screenshot.startsWith('data:image/')) {
     const b64 = screenshot.split(',')[1] || '';

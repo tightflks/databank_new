@@ -12,7 +12,7 @@ import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, back
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { registerBackupRoutes, startBackups } from './backup';
-import { errorMiddleware, installProcessAlerts } from './alerts';
+import { errorMiddleware, installProcessAlerts, reportError } from './alerts';
 import { registerSearchRoutes } from './search/routes';
 import { stripSensitiveColumns } from './columns';
 
@@ -3071,6 +3071,22 @@ const server = app.listen(port, () => {
       : 'SMTP_URL not set — feedback is stored on /admin only, no emails'
   );
   console.log(photosConfigured() ? 'Street View photos enabled (admin approval required)' : 'GOOGLE_MAPS_API_KEY not set — property photos off');
+  // PDF self-check after boot: proves this Chromium works with this Puppeteer (alerts if not).
+  setTimeout(async () => {
+    try {
+      const b = await launchBrowser();
+      try {
+        const page = await b.newPage();
+        await page.setContent('<p>ok</p>', { waitUntil: 'load' });
+        await page.pdf({ format: 'Letter' });
+        console.log(`✅ PDF engine OK (${await (await getSharedBrowser()).version()}, ${chromiumPath() ?? 'bundled'})`);
+      } finally {
+        await b.close();
+      }
+    } catch (e) {
+      reportError('PDF engine self-check', e);
+    }
+  }, 30 * 1000);
 });
 
 // Railway stops the previous container with SIGTERM on every deploy; exit cleanly so the

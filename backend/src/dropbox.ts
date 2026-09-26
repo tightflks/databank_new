@@ -50,7 +50,7 @@ async function accessToken(): Promise<string> {
 
 // Returns null when the path does not exist (Dropbox answers 409).
 // DROPBOX_LOCAL_CSV_ROOT (dev only) serves a local copy of _archive/_csv instead.
-async function download(path: string): Promise<globalThis.Response | null> {
+export async function download(path: string): Promise<globalThis.Response | null> {
   const local = process.env.DROPBOX_LOCAL_CSV_ROOT;
   if (local) {
     if (!path.startsWith(CSV_ROOT + '/')) return null;

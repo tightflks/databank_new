@@ -17,6 +17,7 @@ interface AccountUser {
   disabled: boolean;
   hasAccess: boolean;
   lastSeenAt: number | null;
+  emailVerified: boolean;
 }
 
 function lastActive(ms: number | null): string {
@@ -100,6 +101,18 @@ export default function AdminUsers() {
     }
   };
 
+  // For when a company spam filter swallows the verification email.
+  const markVerified = async (u: AccountUser) => {
+    if (!confirm(`Mark ${u.email} as verified? Do this only once you've confirmed the address with them.`)) return;
+    setBusy(u.id);
+    try {
+      await axios.post(`${API_URL}/api/account/admin/users/${u.id}/verified`);
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const toggleDisabled = async (u: AccountUser) => {
     setBusy(u.id);
     try {
@@ -177,6 +190,8 @@ export default function AdminUsers() {
                       <td className="py-2 pr-3">
                         {u.disabled ? (
                           <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
+                        ) : !u.emailVerified ? (
+                          <span className="inline-flex items-center gap-1 text-amber-700"><XCircle className="w-3.5 h-3.5" /> Email not verified</span>
                         ) : u.hasAccess ? (
                           <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidIndefinite || u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
                         ) : (
@@ -208,6 +223,8 @@ export default function AdminUsers() {
                       <td className="py-2 pr-3">
                         {u.disabled ? (
                           <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
+                        ) : !u.emailVerified ? (
+                          <span className="inline-flex items-center gap-1 text-amber-700"><XCircle className="w-3.5 h-3.5" /> Email not verified</span>
                         ) : u.hasAccess ? (
                           <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> {u.paidIndefinite || u.paidUntil !== null ? 'Paid' : 'Trial'}</span>
                         ) : (
@@ -217,6 +234,9 @@ export default function AdminUsers() {
                       <td className="py-2 pr-3">
                         <div className="flex gap-2 flex-wrap">
                           <button disabled={busy === u.id} onClick={() => startEdit(u)} className="text-xs font-semibold text-gray-600 hover:underline disabled:opacity-50 flex items-center gap-0.5"><Pencil className="w-3 h-3" /> Edit</button>
+                          {!u.emailVerified && (
+                            <button disabled={busy === u.id} onClick={() => markVerified(u)} className="text-xs font-semibold text-amber-700 hover:underline disabled:opacity-50">Mark verified</button>
+                          )}
                           <button disabled={busy === u.id} onClick={() => markPaid(u)} className="text-xs font-semibold text-blue-600 hover:underline disabled:opacity-50">Mark paid…</button>
                           {(u.paidIndefinite || u.paidUntil !== null) && (
                             <button disabled={busy === u.id} onClick={() => revokePaid(u)} title="Back to trial-only access" className="text-xs font-semibold text-gray-500 hover:underline disabled:opacity-50 flex items-center gap-0.5"><RotateCcw className="w-3 h-3" /> Revert</button>

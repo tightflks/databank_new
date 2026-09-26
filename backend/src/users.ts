@@ -2,7 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { isAdmin, requireAdmin } from './auth';
 import { sendVerifyMail, sendResetMail } from './mail';
-import { initSessions, createSession, getSession, deleteSession } from './sessions';
+import { initSessions, createSession, getSession, deleteSession, deleteSessionsFor } from './sessions';
 
 // Customer accounts: self-serve signup (email + a password the user picks themselves — not
 // something we generate and hand them, which is what made the old Becton accounts hard to
@@ -314,7 +314,10 @@ export function registerUserRoutes(app: Express, db: Db) {
     const userId = token ? consumeEmailToken(token, 'reset') : null;
     if (!userId) return res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one.' });
     const { salt, hash } = hashPassword(password);
-    db.prepare('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?').run(hash, salt, userId);
+    // The reset link came to their inbox, so this also confirms the email.
+    db.prepare('UPDATE users SET password_hash = ?, salt = ?, email_verified = 1 WHERE id = ?').run(hash, salt, userId);
+    // Anyone still signed in with the old password is signed out.
+    deleteSessionsFor('user', String(userId));
     res.json({ ok: true });
   });
 
@@ -360,7 +363,7 @@ export function registerUserRoutes(app: Express, db: Db) {
       return {
         id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, company: row.company,
         createdDate: row.created_date, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until, paidIndefinite: session.paidIndefinite,
-        disabled: Boolean(row.disabled), hasAccess: !row.disabled && hasAccess(session), lastSeenAt: row.last_seen_at,
+        disabled: Boolean(row.disabled), hasAccess: !row.disabled && hasAccess(session), lastSeenAt: row.last_seen_at, emailVerified: Boolean(row.email_verified),
       };
     });
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -401,6 +404,15 @@ export function registerUserRoutes(app: Express, db: Db) {
     const disabled = req.body?.disabled ? 1 : 0;
     setDisabledStmt.run(disabled, id);
     res.json({ ok: true, disabled: Boolean(disabled) });
+  });
+
+  // For customers whose company spam filter eats the verification email: an admin confirms the
+  // address (e.g. on the phone) and lets them in.
+  app.post('/api/account/admin/users/:id/verified', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(id);
+    res.json({ ok: true });
   });
 
   app.post('/api/account/admin/users/:id/edit', requireAdmin, (req: Request, res: Response) => {

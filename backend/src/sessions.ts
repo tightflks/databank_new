@@ -62,3 +62,8 @@ export function getSession(kind: string, token: string): string | null {
 export function deleteSession(token: string): void {
   db_?.prepare('DELETE FROM sessions WHERE token = ?').run(token);
 }
+
+// Sign someone out everywhere (e.g. after a password reset, so a leaked password stops working).
+export function deleteSessionsFor(kind: string, subject: string): void {
+  db_?.prepare('DELETE FROM sessions WHERE kind = ? AND subject = ?').run(kind, subject);
+}

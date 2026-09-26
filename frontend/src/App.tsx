@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
 import { FileSpreadsheet, Download, Loader2, CheckCircle, AlertCircle, FileText, Eye, Database, Calendar, FileArchive, Users, LogOut, Menu, X, Lock, MessageSquare, Camera, BookOpen, BarChart3 } from 'lucide-react';
@@ -83,13 +83,24 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [propertyRoute, setPropertyRoute] = useState(parsePropertyRoute());
 
+  // The search screen stays mounted (just hidden) while a property is open, so coming back —
+  // via "Back to search" or the browser's back button — returns to the same results, filters
+  // and scroll position instead of starting the search over (Blake, Sep 24).
+  const searchScrollY = useRef(0);
+  const restoreSearchScroll = () => requestAnimationFrame(() => window.scrollTo({ top: searchScrollY.current }));
+
   useEffect(() => {
-    const onPop = () => setPropertyRoute(parsePropertyRoute());
+    const onPop = () => {
+      const route = parsePropertyRoute();
+      setPropertyRoute(route);
+      if (!route) restoreSearchScroll();
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
   const openProperty = (type: string, id: string) => {
+    if (!propertyRoute) searchScrollY.current = window.scrollY;
     window.history.pushState(null, '', propertyUrl(type, id));
     setPropertyRoute({ type, id });
     window.scrollTo({ top: 0 });
@@ -97,6 +108,7 @@ function App() {
   const closeProperty = () => {
     window.history.pushState(null, '', publicView === 'search' ? '#search' : '/');
     setPropertyRoute(null);
+    restoreSearchScroll();
   };
   const [account, setAccount] = useState<AccountInfo | null | undefined>(undefined); // undefined = still loading
   const [trialEndedFor, setTrialEndedFor] = useState<string | null>(null);
@@ -376,10 +388,8 @@ function App() {
     }
   };
 
-  if (!ADMIN_ROUTE && propertyRoute) {
-    if (account?.hasAccess) {
-      return <PropertyPage type={propertyRoute.type} id={propertyRoute.id} onBack={closeProperty} admin={Boolean(isAdmin)} />;
-    }
+  const showProperty = Boolean(!ADMIN_ROUTE && propertyRoute && account?.hasAccess);
+  if (!ADMIN_ROUTE && propertyRoute && !account?.hasAccess) {
     return (
       <>
         {loginOpen && (
@@ -397,7 +407,11 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <>
+    {showProperty && propertyRoute && (
+      <PropertyPage type={propertyRoute.type} id={propertyRoute.id} onBack={closeProperty} admin={Boolean(isAdmin)} />
+    )}
+    <div className="min-h-screen bg-gray-50 flex flex-col" style={showProperty ? { display: 'none' } : undefined}>
       {/* Brand bar — matches databankinfo.com (navy wordmark, "Research Database") */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
@@ -1074,6 +1088,7 @@ function App() {
 
       {!ADMIN_ROUTE && <FeedbackWidget userEmail={account?.email ?? null} />}
     </div>
+    </>
   );
 }
 

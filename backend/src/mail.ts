@@ -104,3 +104,18 @@ If you didn't request this, you can ignore this email; your password hasn't been
     text,
   });
 }
+
+// Server error alerts go to the people who fix things, not the whole feedback list.
+const ALERT_TO = (process.env.ALERT_TO || 'tareqmd@gmail.com,stephanie@groovestudios.ai')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+export async function sendAlertMail(subject: string, text: string): Promise<void> {
+  if (!transport) return;
+  const from = process.env.SMTP_FROM || new URL(process.env.SMTP_URL!).username || FEEDBACK_TO[0];
+  await transport.sendMail({
+    from: `Databank alerts <${decodeURIComponent(from)}>`,
+    to: ALERT_TO,
+    subject: `[Databank] ${subject}`.slice(0, 200),
+    text,
+  });
+}

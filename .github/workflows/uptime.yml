@@ -1,0 +1,21 @@
+# Hourly outside check that the live site answers. A failed run makes GitHub email the repo
+# owner (Settings → Notifications → Actions). For minute-level alerts, also point a free
+# UptimeRobot monitor at the same URL.
+name: Uptime check
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Health endpoint answers
+        run: |
+          for i in 1 2 3; do
+            curl -fsS --max-time 20 https://databanknew-production.up.railway.app/api/health && exit 0
+            sleep 20
+          done
+          echo "::error::Databank is not responding at /api/health"
+          exit 1

@@ -11,6 +11,9 @@ import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, back
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { registerBackupRoutes, startBackups } from './backup';
+import { errorMiddleware, installProcessAlerts } from './alerts';
+
+installProcessAlerts();
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 import { registerPhotoRoutes, photosConfigured, getApprovedPhoto, fetchStaticMap, queuePhotoIfMissing } from './photos';
 import { registerUserRoutes, requireUser, currentUserEmail } from './users';
@@ -3044,6 +3047,8 @@ if (fs.existsSync(frontendDist)) {
   });
   console.log(`✅ Serving frontend from: ${frontendDist}`);
 }
+
+app.use(errorMiddleware);
 
 // Start the server
 const server = app.listen(port, () => {

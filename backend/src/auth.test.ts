@@ -1,11 +1,12 @@
 import request from 'supertest';
 import express from 'express';
+import Database from 'better-sqlite3';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 
 function makeApp() {
   const app = express();
   app.use(express.json());
-  registerAuthRoutes(app);
+  registerAuthRoutes(app, new Database(':memory:'));
   app.post('/admin-only', requireAdmin, (_req, res) => res.json({ ok: true }));
   app.post('/limited', rateLimit(2), (_req, res) => res.json({ ok: true }));
   return app;
@@ -18,7 +19,7 @@ describe('admin auth', () => {
 
   it('reports not signed in by default', async () => {
     const res = await request(makeApp()).get('/api/auth/me');
-    expect(res.body).toEqual({ admin: false, configured: true });
+    expect(res.body).toEqual({ admin: false, name: null, configured: true });
   });
 
   it('blocks admin routes without a session', async () => {

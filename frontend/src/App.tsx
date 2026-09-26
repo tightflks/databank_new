@@ -106,7 +106,7 @@ function App() {
     window.scrollTo({ top: 0 });
   };
   const closeProperty = () => {
-    window.history.pushState(null, '', publicView === 'search' ? '#search' : '/');
+    window.history.pushState(null, '', publicView === 'search' ? '/#search' : '/');
     setPropertyRoute(null);
     restoreSearchScroll();
   };

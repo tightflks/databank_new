@@ -6,7 +6,7 @@ import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
 import { computePricePerUnit } from './utils/pricePerUnit';
 import { openFeedback } from './utils/feedback';
-import { titleCase, primaryName, aliasNames } from './utils/fmt';
+import { titleCase, primaryName, aliasNames, cleanNumber, fmtAcres } from './utils/fmt';
 import { tokenMatches, wordsOf, canonicalText, searchTokens } from './utils/fuzzy';
 import { downloadReportPdf } from './utils/reportPdf';
 import { trackUsage } from './utils/usage';
@@ -165,10 +165,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
     const dateSet = new Set(recentDates);
     const recent = properties.filter(p => dateSet.has(p.insiderDate));
 
-    const parseNum = (value: string) => {
-      const n = parseFloat(String(value ?? '').replace(/[^0-9.-]/g, ''));
-      return isNaN(n) ? 0 : n;
-    };
+    const parseNum = (value: string) => cleanNumber(value) ?? 0;
 
     const prices = recent.map(p => parseNum(p.salePrice)).filter(n => n > 0);
     prices.sort((a, b) => a - b);
@@ -420,7 +417,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
           salePriceStr,
           unitsStr,
           String(getCellAny('$ UNIT PROJECT', 'PRICE PER SF BUILDING')).trim(),
-          databaseType === 'industrial' ? 2 : 0
+          databaseType === 'apartments' ? 0 : 2
         );
 
         return {
@@ -645,6 +642,8 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
   // Stat cards above the results table — total volume, units, median $/unit, largest sale —
   // computed from whatever's currently filtered, so they update live as the person narrows in.
   const resultStats = useMemo(() => {
+    // Land is sized by acres, not units — its "units" column is building square feet, if anything.
+    const byAcre = databaseType === 'land';
     let volume = 0, unitTotal = 0;
     const ppus: number[] = [];
     let biggest: Property | null = null;
@@ -654,15 +653,15 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         volume += price;
         if (!biggest || price > Number(biggest.salePrice)) biggest = p;
       }
-      const u = Number(p.units);
-      if (u > 0) unitTotal += u;
-      const ppu = Number(p.pricePerUnit);
-      if (ppu > 0) ppus.push(ppu);
+      const size = cleanNumber(byAcre ? p.acres : p.units);
+      if (size) unitTotal += size;
+      const ppu = byAcre ? (price > 0 && size ? price / size : null) : cleanNumber(p.pricePerUnit);
+      if (ppu) ppus.push(ppu);
     }
     ppus.sort((a, b) => a - b);
     const median = ppus.length ? ppus[Math.floor(ppus.length / 2)] : 0;
     return { volume, unitTotal, median, biggest };
-  }, [filteredProperties]);
+  }, [filteredProperties, databaseType]);
 
   const activeFilterCount = [
     selectedCity, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller,
@@ -707,7 +706,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         marketArea: p.marketArea,
         units: p.units,
         yearBuilt: p.yearBuilt,
-        acres: p.acres,
+        acres: cleanNumber(p.acres) === null ? '' : Math.round(cleanNumber(p.acres)! * 100) / 100,
         salePrice: p.salePrice,
         pricePerUnit: p.pricePerUnit,
         saleDate: p.saleDate,
@@ -994,10 +993,11 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
     return String(value).trim();
   };
 
-  // Industrial files size properties by square feet instead of unit counts
-  const isIndustrial = databaseType === 'industrial';
-  const unitLabel = isIndustrial ? 'Sq Ft' : 'Units';
-  const perUnitLabel = isIndustrial ? '$ / SF' : '$ / Unit';
+  // Only apartments are sized by unit count. Every other Reflex file (industrial, office/retail,
+  // franchise, land) has no units column, so "units" there is # SQ FT BUILT and $/unit is $/SF.
+  const bySqFt = databaseType !== 'apartments';
+  const unitLabel = bySqFt ? 'Sq Ft' : 'Units';
+  const perUnitLabel = bySqFt ? '$ / SF' : '$ / Unit';
   // Land parcels have no units or price per unit, so the table omits those columns
   const isLand = databaseType === 'land';
   const tableColumns = ([
@@ -1082,7 +1082,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
     if (!value) return '';
     const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
     if (isNaN(num) || num === 0) return '';
-    return `$${num.toLocaleString('en-US', { maximumFractionDigits: isIndustrial ? 2 : 0 })}`;
+    return `$${num.toLocaleString('en-US', { maximumFractionDigits: bySqFt ? 2 : 0 })}`;
   };
 
   const formatUnits = (value: string) => {
@@ -1920,7 +1920,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                   type="number"
                   value={minPricePerUnit}
                   onChange={(e) => setMinPricePerUnit(e.target.value)}
-                  placeholder={isIndustrial ? 'Min $/SF' : 'Min $/Unit'}
+                  placeholder={bySqFt ? 'Min $/SF' : 'Min $/Unit'}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
                 <span className="text-gray-500">-</span>
@@ -1928,7 +1928,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                   type="number"
                   value={maxPricePerUnit}
                   onChange={(e) => setMaxPricePerUnit(e.target.value)}
-                  placeholder={isIndustrial ? 'Max $/SF' : 'Max $/Unit'}
+                  placeholder={bySqFt ? 'Max $/SF' : 'Max $/Unit'}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-db-navy text-sm"
                 />
               </div>
@@ -1962,11 +1962,11 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                   <div className="text-xl font-semibold text-db-ink num">{resultStats.volume >= 1e9 ? `$${(resultStats.volume / 1e9).toFixed(2)}B` : resultStats.volume >= 1e6 ? `$${(resultStats.volume / 1e6).toFixed(1)}M` : resultStats.volume > 0 ? `$${Math.round(resultStats.volume).toLocaleString()}` : '—'}</div>
                 </div>
                 <div className="bg-white border border-db-border rounded-xl px-4 py-3">
-                  <div className="text-xs text-db-muted">Total {unitLabel}</div>
-                  <div className="text-xl font-semibold text-db-ink num">{resultStats.unitTotal > 0 ? resultStats.unitTotal.toLocaleString() : '—'}</div>
+                  <div className="text-xs text-db-muted">Total {isLand ? 'acres' : unitLabel}</div>
+                  <div className="text-xl font-semibold text-db-ink num">{resultStats.unitTotal > 0 ? resultStats.unitTotal.toLocaleString('en-US', { maximumFractionDigits: isLand ? 1 : 0 }) : '—'}</div>
                 </div>
                 <div className="bg-white border border-db-border rounded-xl px-4 py-3">
-                  <div className="text-xs text-db-muted">Median $/{unitLabel.replace(/s$/, '')}</div>
+                  <div className="text-xs text-db-muted">Median $/{isLand ? 'acre' : unitLabel.replace(/s$/, '')}</div>
                   <div className="text-xl font-semibold text-db-ink num">{resultStats.median > 0 ? `$${Math.round(resultStats.median).toLocaleString()}` : '—'}</div>
                 </div>
                 <div className="bg-white border border-db-border rounded-xl px-4 py-3">
@@ -2026,7 +2026,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                   <div className="flex items-center gap-3 mt-1 text-sm num">
                     {property.salePrice && <span className="font-semibold text-db-ink">{formatCurrency(property.salePrice)}</span>}
                     {!isLand && property.units && <span className="text-db-muted">{formatUnits(property.units)} {unitLabel.toLowerCase()}</span>}
-                    {isLand && property.acres && <span className="text-db-muted">{property.acres} ac</span>}
+                    {isLand && fmtAcres(property.acres) && <span className="text-db-muted">{fmtAcres(property.acres)} ac</span>}
                   </div>
                 </button>
               ))}
@@ -2069,7 +2069,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                         {!isLand && colVisible('units') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap text-right num">{formatUnits(property.units)}</td>}
                         <td className="px-4 py-3 text-sm text-db-ink font-semibold whitespace-nowrap text-right num">{formatCurrency(property.salePrice)}</td>
                         {isLand
-                          ? colVisible('acres') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap text-right num">{property.acres}</td>
+                          ? colVisible('acres') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap text-right num">{fmtAcres(property.acres)}</td>
                           : colVisible('pricePerUnit') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap text-right num">{formatPerUnit(property.pricePerUnit)}</td>}
                         {colVisible('saleDate') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap num">{property.saleDate}</td>}
                         {colVisible('insiderDate') && <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap num">{property.insiderDate}</td>}
@@ -2128,7 +2128,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                                   </button>
                                 ) : '—'}
                               </div>
-                              <div><span className="font-semibold">Price / {isIndustrial ? 'SF' : 'Unit'}:</span> {formatPerUnit(property.pricePerUnit) || '—'}</div>
+                              <div><span className="font-semibold">Price / {bySqFt ? 'SF' : 'Unit'}:</span> {formatPerUnit(property.pricePerUnit) || '—'}</div>
                               <div><span className="font-semibold">Loan Amount:</span> {formatCurrency(property.loanAmount) || '—'}</div>
                             </div>
                           </td>

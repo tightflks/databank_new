@@ -51,3 +51,18 @@ export function fmtValue(field: string, v: string) {
   if (MONEY.test(field)) return '$' + Math.round(n).toLocaleString('en-US');
   return Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
+
+// Reflex fills unknown numbers with a run of 1s (111111, 11111111111111) and some computed
+// fields overflow (1e17 $/acre) — treat those as blank so they don't wreck totals and medians.
+export function cleanNumber(v: unknown): number | null {
+  const s = String(v ?? '').replace(/[$,\s]/g, '');
+  if (!s || /^1{5,}(\.0*)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 && n < 1e12 ? n : null;
+}
+
+// Acreage with commas and at most two decimals ("17.464000000000002" -> "17.46").
+export function fmtAcres(v: unknown): string {
+  const n = cleanNumber(v);
+  return n === null ? '' : n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}

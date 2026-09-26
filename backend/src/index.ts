@@ -682,12 +682,15 @@ const DEFAULT_ORIGINS = [
 ];
 const allowedOrigins = new Set([
   ...DEFAULT_ORIGINS,
+  ...(process.env.APP_URL ? [new URL(process.env.APP_URL).origin] : []),
   ...(process.env.ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean),
 ]);
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.has(origin)) return cb(null, true); // no Origin header = same-origin/non-browser request
-    cb(new Error('Not allowed by CORS'));
+    // No Origin header = same-origin/non-browser request. An unknown origin gets no CORS
+    // headers (so the browser blocks cross-site reads) rather than an error, which would 500
+    // the site's own scripts and styles whenever it's served from a domain not listed here.
+    cb(null, !origin || allowedOrigins.has(origin));
   },
   credentials: true,
 }));
@@ -716,6 +719,18 @@ app.post('/api/export/xlsx', requireUser, rateLimit(60, 'Export limit reached ({
     return /^[\s$,\d.-]+$/.test(String(v)) && Number.isFinite(n) ? n : v;
   }));
   const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
+  // Dollar signs and commas in Excel itself (Blake, Sep 24), keeping the cells numeric so they
+  // still sort and sum. Chosen by column key; years, zips and dates are left as they are.
+  const numFmt = (key: string) =>
+    /perunit/i.test(key) ? '$#,##0.00' : /price|loan|amount|volume/i.test(key) ? '$#,##0' : /acres/i.test(key) ? '#,##0.##' : /units|sqft|sq_?ft/i.test(key) ? '#,##0' : null;
+  columns.forEach((c, ci) => {
+    const z = numFmt(c.key);
+    if (!z) return;
+    for (let ri = 1; ri <= body.length; ri++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: ri, c: ci })];
+      if (cell && cell.t === 'n') cell.z = z;
+    }
+  });
   ws['!cols'] = columns.map((c, i) => ({
     wch: Math.min(60, Math.max(c.label.length, ...body.slice(0, 200).map((r) => String(r[i] ?? '').length)) + 2),
   }));

@@ -171,6 +171,49 @@ async function loadRows(type: string, week: string): Promise<Parsed> {
   return parsed;
 }
 
+// ---------- Upload: write one week's converted CSVs and record it in the manifest ----------
+
+async function upload(path: string, body: Buffer): Promise<void> {
+  const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${await accessToken()}`,
+      'Content-Type': 'application/octet-stream',
+      'Dropbox-API-Arg': JSON.stringify({ path, mode: 'overwrite', mute: true }),
+    },
+    body: new Uint8Array(body),
+  });
+  if (!res.ok) throw new Error(`Dropbox upload failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+}
+
+export type WeekFile = { type: string; body: Buffer };
+
+// Files come from the RXD reader (tools/rxd/rxd.py) run by hand when the scheduled sync cannot.
+export async function uploadWeek(week: string, files: WeekFile[]): Promise<{ week: string; files: Record<string, number> }> {
+  if (!WEEK.test(week)) throw new Error('week must be YYYY-MM-DD');
+  const counts: Record<string, number> = {};
+  for (const f of files) {
+    if (!FILE.test(f.type)) throw new Error(`Bad file name "${f.type}"`);
+    const rows = parseCsv(f.body.toString('utf8')).filter((r) => r.some((v) => v));
+    counts[f.type] = Math.max(0, rows.length - 1);
+    await upload(`${CSV_ROOT}/${week}/${f.type}.csv`, f.body);
+  }
+  const res = await download(`${CSV_ROOT}/manifest.json`);
+  const m: Manifest = res ? ((await res.json()) as Manifest) : { weeks: {} };
+  const prev = m.weeks[week];
+  const zip = `datafile_${week.slice(5, 7)}_${week.slice(8, 10)}_${week.slice(0, 4)}.zip`;
+  m.weeks[week] = {
+    zip: prev?.zip ?? zip,
+    size: prev?.size ?? files.reduce((n, f) => n + f.body.length, 0),
+    synced_at: new Date().toISOString(),
+    files: { ...(prev?.files ?? {}), ...counts },
+  };
+  await upload(`${CSV_ROOT}/manifest.json`, Buffer.from(JSON.stringify(m, null, 2)));
+  summaryCache = null;
+  for (const t of Object.keys(counts)) rowsCache.delete(`${week}/${t}`);
+  return { week, files: counts };
+}
+
 // ---------- Latest week as an Excel-shaped sheet (feeds the uploads table) ----------
 
 export function dropboxConfigured(): boolean {

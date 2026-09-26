@@ -187,6 +187,37 @@ async function upload(path: string, body: Buffer): Promise<void> {
   if (!res.ok) throw new Error(`Dropbox upload failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
 }
 
+// Files over Dropbox's 150 MB single-call limit go up in chunks through an upload session.
+export async function uploadLarge(path: string, body: Buffer): Promise<void> {
+  const CHUNK = 64 * 1024 * 1024;
+  if (body.length <= CHUNK) return upload(path, body);
+  const token = await accessToken();
+  const post = async (endpoint: string, arg: object, chunk: Buffer) => {
+    const res = await fetch(`https://content.dropboxapi.com/2/files/${endpoint}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': JSON.stringify(arg) },
+      body: new Uint8Array(chunk),
+    });
+    if (!res.ok) throw new Error(`Dropbox ${endpoint} failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+    return res;
+  };
+  const start = (await (await post('upload_session/start', { close: false }, body.subarray(0, CHUNK))).json()) as { session_id: string };
+  let offset = CHUNK;
+  for (; offset + CHUNK < body.length; offset += CHUNK) {
+    await post('upload_session/append_v2', { cursor: { session_id: start.session_id, offset }, close: false }, body.subarray(offset, offset + CHUNK));
+  }
+  await post('upload_session/finish', { cursor: { session_id: start.session_id, offset }, commit: { path, mode: 'overwrite', mute: true } }, body.subarray(offset));
+}
+
+export async function deletePath(path: string): Promise<void> {
+  const res = await fetch('https://api.dropboxapi.com/2/files/delete_v2', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) throw new Error(`Dropbox delete failed (${res.status})`);
+}
+
 export type WeekFile = { type: string; body: Buffer };
 
 // Files come from the RXD reader (tools/rxd/rxd.py) run by hand when the scheduled sync cannot.
@@ -225,9 +256,9 @@ const DATAFILE_ROOT = '/GrooveSolutions/Databank/_archive/_datafile';
 const EXPORT_TYPES = [...new Set(DATABASES.map((d) => d.type))];
 const BACKUP_AFTER_MS = 6 * 60 * 60 * 1000; // give the normal job this long first
 
-type Entry = { '.tag': string; name: string; path_lower: string; server_modified?: string };
+export type Entry = { '.tag': string; name: string; path_lower: string; server_modified?: string };
 
-async function listFolder(path: string): Promise<Entry[]> {
+export async function listFolder(path: string): Promise<Entry[]> {
   const token = await accessToken();
   const call = async (endpoint: string, body: object) => {
     const res = await fetch(`https://api.dropboxapi.com/2/files/${endpoint}`, {

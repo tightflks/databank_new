@@ -10,6 +10,7 @@ import fs from 'fs';
 import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, backfillWeekFromExcel, isTestRecord, DATABASES } from './dropbox';
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
+import { registerBackupRoutes, startBackups } from './backup';
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
 import { registerPhotoRoutes, photosConfigured, getApprovedPhoto, fetchStaticMap, queuePhotoIfMissing } from './photos';
 import { registerUserRoutes, requireUser, currentUserEmail } from './users';
@@ -3029,6 +3030,7 @@ registerUserRoutes(app, db);
 registerNotesAiRoutes(app, db);
 registerStatsRoutes(app, db);
 registerUsageRoutes(app, db);
+registerBackupRoutes(app, db);
 
 // Serve the built frontend (production)
 const frontendDist = path.join(__dirname, '../../frontend/dist');
@@ -3049,6 +3051,7 @@ const server = app.listen(port, () => {
   if (dropboxConfigured()) {
     syncAllDatabasesFromDropbox();
     setInterval(() => syncAllDatabasesFromDropbox(), DROPBOX_SYNC_MS);
+    startBackups(db);
   } else {
     console.log('Dropbox not configured — databases stay on manual uploads');
   }

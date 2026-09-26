@@ -14,6 +14,8 @@ import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { registerBackupRoutes, startBackups } from './backup';
 import { errorMiddleware, installProcessAlerts, reportError } from './alerts';
 import { registerSearchRoutes } from './search/routes';
+import { convertNewWeeks } from './weeklyJob';
+import { execFile } from 'child_process';
 import { stripSensitiveColumns } from './columns';
 
 installProcessAlerts();
@@ -2134,7 +2136,7 @@ app.get('/api/databases', requireUser, (req: Request, res: Response) => {
 // Attach the latest weekly CSV from Dropbox to each database as a new upload version, so Search,
 // Generate and Reports run off it exactly like a hand-uploaded .xls. One version per (type, week, file rev).
 
-const DROPBOX_SYNC_MS = 6 * 60 * 60 * 1000;
+const DROPBOX_SYNC_MS = 2 * 60 * 60 * 1000; // new weeks show up within ~2 hours of the Thursday upload
 const findDropboxUploadStmt: any = db.prepare(`SELECT id FROM uploads WHERE database_type = ? AND filename = ?`);
 
 type DropboxSyncResult = { database_type: string; week: string | null; status: 'attached' | 'current' | 'no-file' | 'error'; upload_id?: number; rows?: number; error?: string };
@@ -2158,7 +2160,9 @@ async function syncDatabaseFromDropbox(databaseType: string): Promise<DropboxSyn
 }
 
 async function syncAllDatabasesFromDropbox(forceExcelBackup = false): Promise<DropboxSyncResult[]> {
-  // A week uploaded to Dropbox but never converted to CSV gets built from its Excel exports.
+  // New weekly zips are converted from the Reflex files (tools/rxd); if that fails, a week that
+  // still has no CSVs after 6 hours is built from its Excel exports instead.
+  await convertNewWeeks();
   await backfillWeekFromExcel(forceExcelBackup).catch((e: unknown) => console.error('Excel backup failed:', e instanceof Error ? e.message : e));
   const results: DropboxSyncResult[] = [];
   for (const type of DATABASE_TYPES) results.push(await syncDatabaseFromDropbox(type));
@@ -3071,6 +3075,11 @@ const server = app.listen(port, () => {
       : 'SMTP_URL not set — feedback is stored on /admin only, no emails'
   );
   console.log(photosConfigured() ? 'Street View photos enabled (admin approval required)' : 'GOOGLE_MAPS_API_KEY not set — property photos off');
+  // Python is needed for the weekly Reflex conversion (tools/rxd); say so at boot if it's missing.
+  execFile('python3', ['--version'], (err, out, errOut) => {
+    if (err) reportError('python3 not found (weekly data conversion needs it)', err);
+    else console.log(`✅ ${String(out || errOut).trim()} available for the weekly conversion`);
+  });
   // PDF self-check after boot: proves this Chromium works with this Puppeteer (alerts if not).
   setTimeout(async () => {
     try {

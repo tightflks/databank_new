@@ -8,7 +8,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 import puppeteer, { type Browser, type Page } from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
-import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, backfillWeekFromExcel, isTestRecord, DATABASES } from './dropbox';
+import { registerDropboxRoutes, dropboxConfigured, latestSheet, uploadWeek, backfillWeekFromExcel, excelToCsv, isTestRecord, DATABASES } from './dropbox';
 import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { registerBackupRoutes, startBackups } from './backup';
@@ -3080,6 +3080,18 @@ const server = app.listen(port, () => {
     if (err) reportError('python3 not found (weekly data conversion needs it)', err);
     else console.log(`✅ ${String(out || errOut).trim()} available for the weekly conversion`);
   });
+  // xlsx self-check: the library comes from SheetJS's own download (not npm), so confirm at boot
+  // that it loads and that the weekly Excel backup's conversion still round-trips.
+  try {
+    const ws = XLSX.utils.aoa_to_sheet([['P NAME', 'SALE PRICE'], ['CHECK', 1234]]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'S');
+    const csv = excelToCsv(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))?.csv ?? '';
+    if (!csv.includes('CHECK,1234')) throw new Error(`round trip gave ${JSON.stringify(csv)}`);
+    console.log(`✅ xlsx ${XLSX.version} OK`);
+  } catch (e) {
+    reportError('xlsx self-check', e);
+  }
   // PDF self-check after boot: proves this Chromium works with this Puppeteer (alerts if not).
   setTimeout(async () => {
     try {

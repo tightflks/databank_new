@@ -35,6 +35,7 @@ type UserRow = {
   last_name: string | null;
   company: string | null;
   email_verified: number;
+  last_seen_at: number | null;
 };
 
 type Session = { userId: number; email: string; trialEndsAt: number; paidUntil: number | null; paidIndefinite: boolean; emailVerified: boolean };
@@ -166,6 +167,10 @@ export function requireUser(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Please sign in to search Databank.' });
   }
   const session = userToSession(row);
+  // "Last active" for the admin Users tab — written at most every 10 minutes, not per request.
+  if (!row.last_seen_at || Date.now() - row.last_seen_at > 10 * 60 * 1000) {
+    db_.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), row.id);
+  }
   if (!hasAccess(session)) {
     return res.status(402).json({
       error: 'Your 30-day trial has ended. Contact Databank to continue.',
@@ -209,7 +214,7 @@ export function registerUserRoutes(app: Express, db: Db) {
   `);
   // Added after the table already existed in production, so each is a separate migration
   // guarded against "column already exists" rather than part of the CREATE TABLE above.
-  for (const col of ['first_name TEXT', 'last_name TEXT', 'company TEXT', 'paid_indefinite INTEGER NOT NULL DEFAULT 0', 'email_verified INTEGER NOT NULL DEFAULT 0']) {
+  for (const col of ['first_name TEXT', 'last_name TEXT', 'company TEXT', 'paid_indefinite INTEGER NOT NULL DEFAULT 0', 'email_verified INTEGER NOT NULL DEFAULT 0', 'last_seen_at INTEGER']) {
     try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch { /* already added */ }
   }
   // Verification links and password-reset links, one row per outstanding link. purpose keeps
@@ -355,10 +360,14 @@ export function registerUserRoutes(app: Express, db: Db) {
       return {
         id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, company: row.company,
         createdDate: row.created_date, trialEndsAt: row.trial_ends_at, paidUntil: row.paid_until, paidIndefinite: session.paidIndefinite,
-        disabled: Boolean(row.disabled), hasAccess: !row.disabled && hasAccess(session),
+        disabled: Boolean(row.disabled), hasAccess: !row.disabled && hasAccess(session), lastSeenAt: row.last_seen_at,
       };
     });
-    res.json({ users, activeCount: users.filter((u) => u.hasAccess).length, totalCount: users.length });
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    res.json({
+      users, activeCount: users.filter((u) => u.hasAccess).length, totalCount: users.length,
+      activeThisWeek: users.filter((u) => (u.lastSeenAt ?? 0) > weekAgo).length,
+    });
   });
 
   // paidUntil: an ISO date string ("YYYY-MM-DD") to grant access through, or null for "paid, no

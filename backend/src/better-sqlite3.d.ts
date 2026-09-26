@@ -5,6 +5,7 @@ declare module 'better-sqlite3' {
     prepare(source: string): Statement;
     transaction(fn: (...args: any[]) => any): (...args: any[]) => any;
     close(): void;
+    backup(destination: string): Promise<unknown>;
   }
 
   interface Statement {

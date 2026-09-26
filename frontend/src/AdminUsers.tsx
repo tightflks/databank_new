@@ -16,11 +16,23 @@ interface AccountUser {
   paidIndefinite: boolean;
   disabled: boolean;
   hasAccess: boolean;
+  lastSeenAt: number | null;
+}
+
+function lastActive(ms: number | null): string {
+  if (!ms) return 'never used';
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if (mins < 60) return 'active just now';
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `active ${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'active yesterday' : `active ${days} days ago`;
 }
 
 export default function AdminUsers() {
   const [users, setUsers] = useState<AccountUser[] | null>(null);
   const [activeCount, setActiveCount] = useState(0);
+  const [activeThisWeek, setActiveThisWeek] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -52,6 +64,7 @@ export default function AdminUsers() {
       const r = await axios.get(`${API_URL}/api/account/admin/users`);
       setUsers(r.data.users);
       setActiveCount(r.data.activeCount);
+      setActiveThisWeek(r.data.activeThisWeek ?? 0);
     } catch {
       setError('Could not load users.');
     }
@@ -108,7 +121,11 @@ export default function AdminUsers() {
           <div className="flex gap-3">
             <div className="bg-emerald-50 text-emerald-800 rounded-xl px-4 py-2 text-center">
               <div className="text-xl font-bold">{activeCount}</div>
-              <div className="text-xs">active now</div>
+              <div className="text-xs">with access</div>
+            </div>
+            <div className="bg-blue-50 text-blue-800 rounded-xl px-4 py-2 text-center">
+              <div className="text-xl font-bold">{activeThisWeek}</div>
+              <div className="text-xs">used it this week</div>
             </div>
             <div className="bg-gray-50 text-gray-700 rounded-xl px-4 py-2 text-center">
               <div className="text-xl font-bold">{users.length}</div>
@@ -153,7 +170,10 @@ export default function AdminUsers() {
                         <input value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} placeholder="Email" className="w-full text-xs border border-gray-300 rounded px-1.5 py-1" />
                         {editError && <p className="text-[10px] text-red-600 mt-1">{editError}</p>}
                       </td>
-                      <td className="py-2 pr-3 text-gray-500">{new Date(u.createdDate + (u.createdDate.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}</td>
+                      <td className="py-2 pr-3 text-gray-500">
+                        {new Date(u.createdDate + (u.createdDate.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
+                        <div className="text-xs text-gray-400">{lastActive(u.lastSeenAt)}</div>
+                      </td>
                       <td className="py-2 pr-3">
                         {u.disabled ? (
                           <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>
@@ -181,7 +201,10 @@ export default function AdminUsers() {
                         <div className="text-xs text-gray-500">{u.company || ''}</div>
                       </td>
                       <td className="py-2 pr-3">{u.email}</td>
-                      <td className="py-2 pr-3 text-gray-500">{new Date(u.createdDate + (u.createdDate.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}</td>
+                      <td className="py-2 pr-3 text-gray-500">
+                        {new Date(u.createdDate + (u.createdDate.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}
+                        <div className="text-xs text-gray-400">{lastActive(u.lastSeenAt)}</div>
+                      </td>
                       <td className="py-2 pr-3">
                         {u.disabled ? (
                           <span className="inline-flex items-center gap-1 text-gray-500"><Ban className="w-3.5 h-3.5" /> Disabled</span>

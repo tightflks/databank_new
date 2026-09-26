@@ -1,13 +1,11 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { FileText, Eye, Calendar, Search, Loader2, TrendingUp, Database, ChevronDown, ChevronUp, X, DollarSign, MapPin, Building2, BarChart3, Sparkles, History, SlidersHorizontal, Download, Clock, FileDown } from 'lucide-react';
 import { formatExcelDate } from './utils/excelDate';
 import PropertyHistory from './PropertyHistory';
 import { AskCatalogue, HistoryResults, type HistoryAnswer } from './AskAI';
-import { computePricePerUnit } from './utils/pricePerUnit';
 import { openFeedback } from './utils/feedback';
 import { titleCase, primaryName, aliasNames, cleanNumber, fmtAcres } from './utils/fmt';
-import { tokenMatches, wordsOf, canonicalText, searchTokens } from './utils/fuzzy';
 import { downloadReportPdf } from './utils/reportPdf';
 import { trackUsage } from './utils/usage';
 
@@ -31,10 +29,7 @@ const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://l
 // Archive (Dropbox) file type per database — the key the property-history API uses.
 const ARCHIVE_TYPE: Record<string, string> = { apartments: 'APTS', franchise: 'FRANCHIS', industrial: 'IND', land: 'LANDSALE', offices: 'OFFSHOP', retail: 'OFFSHOP' };
 
-// Customers buy five reports; Databank's Franchise file is sold inside the Retail report, so the
-// Retail tab shows the office-and-shopping file with the Franchise records merged in.
-const MERGED_INTO: Record<string, string[]> = { retail: ['franchise'] };
-const SOURCE_HEADER = 'DATABANK FILE';
+// Retail merges in the Franchise file and every row lookup happens on the server (backend/src/search).
 
 const DATABASE_OPTIONS = [
   { value: 'apartments', label: '🏢 Apartments' },
@@ -69,6 +64,26 @@ interface Property {
   [key: string]: any;
 }
 
+// What the server sends about a database (no rows): see backend/src/search/routes.ts.
+type InsiderStats = {
+  dates: string[]; propertyCount: number; pricedCount: number; totalVolume: number; avgPrice: number; medianPrice: number;
+  maxPrice: number; totalUnits: number; topCounties: { county: string; count: number; volume: number }[]; topCities: { city: string; count: number }[];
+};
+type Tally = [string, number][];
+interface SearchMeta {
+  total: number;
+  headers: string[];
+  latestUploadName: string;
+  filters?: Filters;
+  insider?: InsiderStats;
+  newThisWeek?: { date: string; count: number } | null;
+  tallies?: { county: Tally; zip: Tally; insiderDate: Tally; countyNamed: Tally; zipNamed: Tally; city: Tally };
+}
+type OwnerRow = { owner: string; count: number; volume: number; units: number };
+type ResultStats = { volume: number; unitTotal: number; median: number; biggest: Property | null };
+const EMPTY_INSIDER: InsiderStats = { dates: [], propertyCount: 0, pricedCount: 0, totalVolume: 0, avgPrice: 0, medianPrice: 0, maxPrice: 0, totalUnits: 0, topCounties: [], topCities: [] };
+const EMPTY_STATS: ResultStats = { volume: 0, unitTotal: 0, median: 0, biggest: null };
+
 interface Filters {
   cities: string[];
   counties: string[];
@@ -87,8 +102,15 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
   const [searchText, setSearchText] = useState('');
   
   // Property search states
-  const [properties, setProperties] = useState<Property[]>([]);
+  // The server holds the rows; the browser gets a summary of the database and one page of results.
+  const [meta, setMeta] = useState<SearchMeta | null>(null);
   const [filteredProperties, setFilteredProperties] = useState<Property[]>([]);
+  const [resultTotal, setResultTotal] = useState(0);
+  const [browseMax, setBrowseMax] = useState(1000);
+  const [resultStats, setResultStats] = useState<ResultStats>(EMPTY_STATS);
+  const [topOwners, setTopOwners] = useState<OwnerRow[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const searchSeq = useRef(0);
   const [partialMatch, setPartialMatch] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' } | null>(null);
   const [filters, setFilters] = useState<Filters | null>(null);
@@ -128,7 +150,6 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
   const [landSaleDateAfter, setLandSaleDateAfter] = useState('');
   const [landSaleDateBefore, setLandSaleDateBefore] = useState('');
   const [latestUploadName, setLatestUploadName] = useState('');
-  const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [historyQuery, setHistoryQuery] = useState('');
   const [historyDb, setHistoryDb] = useState<string | null>(null);
   const [reportBusy, setReportBusy] = useState<'report' | 'pdf' | null>(null);
@@ -149,101 +170,12 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
   const [insiderDateAfter, setInsiderDateAfter] = useState('');
   const [insiderDateBefore, setInsiderDateBefore] = useState('');
 
-  // Stats over the properties belonging to the 10 most recent insider dates (before today)
-  const recentInsiderStats = useMemo(() => {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+  const totalProperties = meta?.total ?? 0;
+  const excelHeaders = meta?.headers ?? [];
+  // Stats over the properties belonging to the 10 most recent insider dates (before today) — from the server.
+  const recentInsiderStats = meta?.insider ?? EMPTY_INSIDER;
 
-    const recentDates = Array.from(new Set(properties.map(p => p.insiderDate).filter(Boolean)))
-      .filter(d => {
-        const t = new Date(d).getTime();
-        return !isNaN(t) && t < startOfToday.getTime();
-      })
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
-      .slice(0, 10);
-
-    const dateSet = new Set(recentDates);
-    const recent = properties.filter(p => dateSet.has(p.insiderDate));
-
-    const parseNum = (value: string) => cleanNumber(value) ?? 0;
-
-    const prices = recent.map(p => parseNum(p.salePrice)).filter(n => n > 0);
-    prices.sort((a, b) => a - b);
-    const totalVolume = prices.reduce((sum, n) => sum + n, 0);
-    const avgPrice = prices.length > 0 ? totalVolume / prices.length : 0;
-    const medianPrice = prices.length > 0
-      ? prices.length % 2 === 1
-        ? prices[Math.floor(prices.length / 2)]
-        : (prices[prices.length / 2 - 1] + prices[prices.length / 2]) / 2
-      : 0;
-
-    const totalUnits = recent.reduce((sum, p) => sum + parseNum(p.units), 0);
-
-    const countyMap = new Map<string, { count: number; volume: number }>();
-    recent.forEach(p => {
-      const county = (p.county || '').trim();
-      if (!county) return;
-      const entry = countyMap.get(county) || { count: 0, volume: 0 };
-      entry.count += 1;
-      entry.volume += parseNum(p.salePrice);
-      countyMap.set(county, entry);
-    });
-    const topCounties = Array.from(countyMap.entries())
-      .map(([county, { count, volume }]) => ({ county, count, volume }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-
-    const cityMap = new Map<string, number>();
-    recent.forEach(p => {
-      const city = (p.city || '').trim();
-      if (city) cityMap.set(city, (cityMap.get(city) || 0) + 1);
-    });
-    const topCities = Array.from(cityMap.entries())
-      .map(([city, count]) => ({ city, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-
-    return {
-      dates: recentDates,
-      propertyCount: recent.length,
-      pricedCount: prices.length,
-      totalVolume,
-      avgPrice,
-      medianPrice,
-      maxPrice: prices.length > 0 ? prices[prices.length - 1] : 0,
-      totalUnits,
-      topCounties,
-      topCities
-    };
-  }, [properties]);
-
-  // Top owners over sales in the most recent 3 years (within the current search filters)
-  const topOwners = useMemo(() => {
-    const parseNum = (value: string) => {
-      const n = parseFloat(String(value ?? '').replace(/[^0-9.-]/g, ''));
-      return isNaN(n) ? 0 : n;
-    };
-    const cutoff = new Date();
-    cutoff.setFullYear(cutoff.getFullYear() - 3);
-    const recent = filteredProperties.filter(p => {
-      const t = new Date(p.saleDate).getTime();
-      return !isNaN(t) && t >= cutoff.getTime();
-    });
-    const ownerMap = new Map<string, { count: number; volume: number; units: number }>();
-    recent.forEach(p => {
-      const owner = (p.owner || p.taxOwner || '').trim();
-      if (!owner) return;
-      const entry = ownerMap.get(owner) || { count: 0, volume: 0, units: 0 };
-      entry.count += 1;
-      entry.volume += parseNum(p.salePrice);
-      entry.units += parseNum(p.units);
-      ownerMap.set(owner, entry);
-    });
-    return Array.from(ownerMap.entries())
-      .map(([owner, stats]) => ({ owner, ...stats }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 15);
-  }, [filteredProperties]);
+  // Top owners over sales in the most recent 3 years (within the current search filters) come with each search.
 
   const formatCompactCurrency = (value: number) => {
     if (value <= 0) return '-';
@@ -273,7 +205,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
     applyPropertyFilters();
     setVisibleRows(PAGE_SIZE);
     setExpandedRow(null);
-  }, [sort, searchQuery, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, properties]);
+  }, [sort, searchQuery, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller, ownerFilter, entityFilter, streetFilter, selectedDate, minPrice, maxPrice, minLandPrice, maxLandPrice, minPricePerUnit, maxPricePerUnit, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore, insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, meta]);
 
   const fetchReports = async () => {
     setLoading(true);
@@ -305,363 +237,73 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
   const loadLatestUpload = async () => {
     try {
       // Reset state so stale data from another database doesn't persist
-      setProperties([]);
+      setMeta(null);
       setFilteredProperties([]);
+      setResultTotal(0);
       setFilters(null);
       setLatestUploadName('');
-      setExcelHeaders([]);
-
-      // Latest upload of this database, plus of any database folded into it (Franchise → Retail).
-      type Cell = string | number | null | undefined;
-      type UploadFile = { name: string; data: Cell[][] };
-      const latestData = async (db: string): Promise<UploadFile | null> => {
-        const uploadsResponse = await axios.get(`${API_URL}/api/uploads?database_type=${db}`);
-        const uploads = uploadsResponse.data.uploads;
-        if (uploads.length === 0) return null;
-        // Uploads are sorted by date DESC, so the first one is the latest
-        const dataResponse = await axios.get(`${API_URL}/api/uploads/${uploads[0].id}/data`);
-        const data = dataResponse.data.data;
-        return data && data.length ? { name: uploads[0].original_filename, data } : null;
-      };
-      const sources = (await Promise.all([databaseType, ...(MERGED_INTO[databaseType] || [])].map(async (db) => ({ db, file: await latestData(db) }))))
-        .filter((s): s is { db: string; file: UploadFile } => s.file !== null);
-      if (sources.length === 0) return;
-      setLatestUploadName(sources.map((s) => s.file.name).join(', '));
-
-      // Files name a few columns differently, so merged rows are re-laid onto the union of the headers,
-      // each tagged with the file it came from.
-      const headers: string[] = sources.length > 1 ? [SOURCE_HEADER] : [];
-      for (const s of sources) for (const h of s.file.data[0]) { const t = String(h ?? '').trim(); if (t && !headers.some((x) => x.trim().toUpperCase() === t.toUpperCase())) headers.push(t); }
-      const sourceLabel = (db: string) => db.charAt(0).toUpperCase() + db.slice(1);
-      const dataRows: Cell[][] = sources.flatMap((s) => {
-        const pos = s.file.data[0].map((h) => headers.findIndex((x) => x.trim().toUpperCase() === String(h ?? '').trim().toUpperCase()));
-        return s.file.data.slice(1).map((r) => {
-          const out: Cell[] = new Array(headers.length).fill('');
-          if (sources.length > 1) out[0] = sourceLabel(s.db);
-          pos.forEach((p, i) => { if (p >= 0) out[p] = r[i]; });
-          return out;
-        });
-      });
-      setExcelHeaders(headers);
-      
-      const processedProperties = dataRows.map((row) => {
-        const getCell = (header: string) => {
-          const idx = headers.findIndex((h: string) => h && h.trim().toLowerCase() === header.toLowerCase());
-          return idx >= 0 ? (row[idx] || '') : '';
-        };
-        // Resolve a value from the first header that exists in this file.
-        // Apartment and industrial files name several columns differently
-        // (e.g. UNITS COMPLETED vs # SQ FT BUILT), so each field lists its aliases.
-        const getCellAny = (...headerNames: string[]) => {
-          for (const name of headerNames) {
-            const idx = headers.findIndex((h: string) => h && h.trim().toLowerCase() === name.toLowerCase());
-            if (idx >= 0 && row[idx] !== undefined && row[idx] !== null && String(row[idx]).trim() !== '') return row[idx];
-          }
-          return '';
-        };
-        // Extract a 4-digit year from a value that may be a year or an Excel date serial
-        const yearFromValue = (v: any): string => {
-          if (v === undefined || v === null || String(v).trim() === '') return '';
-          const str = String(v).trim();
-          // Text like "6/15/1985", "1985-86" or "Blt 1985": take the first 4-digit year.
-          // (parseFloat would read "6/15/1985" as 6, i.e. an Excel date in 1900.)
-          if (typeof v !== 'number') {
-            const m = str.match(/\b(1[5-9]\d{2}|2[01]\d{2})\b/);
-            if (m) return m[1];
-            if (!/^\d+(\.\d+)?$/.test(str)) return str;
-          }
-          const n = typeof v === 'number' ? v : parseFloat(str);
-          if (isNaN(n)) return str;
-          if (n >= 1500 && n <= 2200) return String(Math.round(n));
-          // Two-digit year ("85" -> 1985, "05" -> 2005).
-          if (n >= 0 && n < 100 && Number.isInteger(n)) {
-            const cutoff = (new Date().getFullYear() % 100) + 1;
-            return String(n < cutoff ? 2000 + n : 1900 + n);
-          }
-          // A genuine Excel date serial (> 2200 means 1906 onward).
-          if (n > 2200) {
-            const parts = formatExcelDate(n).split('/');
-            if (parts.length === 3) return parts[2];
-          }
-          return str;
-        };
-        
-        // INSIDER DATE is the latest report the property appeared in; PREVIOUS INSIDER DATE 1..3 are the
-        // earlier ones (not always kept in order), so the "previous" shown is the newest of those.
-        const latestInsider = formatExcelDate(getCell('INSIDER DATE'));
-        const previousInsider = headers
-          .map((h: string, i: number) => ({ h: (h || '').trim().toUpperCase(), i }))
-          .filter(({ h }: { h: string }) => /^PREVIOUS INSIDER DATE/.test(h))
-          .map(({ i }: { i: number }) => formatExcelDate(row[i]))
-          .filter((d: string) => d && d !== latestInsider && !isNaN(new Date(d).getTime()))
-          .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime())[0] || '';
-
-        // A record may carry a building sale (SALE DATE / SALE PRICE) and/or a land sale
-        // (LAND SALE DATE / LAND SALE PRICE). Land files lead with the land sale; the others show
-        // the building sale and fall back to the land sale when there is none.
-        const landSaleDate = formatExcelDate(getCell('LAND SALE DATE'));
-        const landSalePrice = String(getCell('LAND SALE PRICE')).trim();
-        const bldgSalePrice = String(getCell('SALE PRICE')).trim();
-        const bldgSaleDate = formatExcelDate(getCell('SALE DATE'));
-        const isLandDb = databaseType === 'land';
-        const salePriceStr = isLandDb ? (landSalePrice || bldgSalePrice) : (bldgSalePrice || landSalePrice);
-        const saleDate = isLandDb ? (landSaleDate || bldgSaleDate) : (bldgSaleDate || landSaleDate);
-        // Researcher notes (M1..M10) so Quick find matches text like "LAND FOR THE APTS"
-        const comments = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10']
-          .map(c => String(getCell(c)).trim())
-          .filter(Boolean)
-          .join(' ');
-        // Apartments size by units; industrial sizes by building square feet
-        const unitsStr = String(getCellAny('UNITS COMPLETED:', 'UNITS COMPLETED', '# SQ FT BUILT')).trim();
-        const pricePerUnit = computePricePerUnit(
-          salePriceStr,
-          unitsStr,
-          String(getCellAny('$ UNIT PROJECT', 'PRICE PER SF BUILDING')).trim(),
-          databaseType === 'apartments' ? 0 : 2
-        );
-
-        return {
-          propertyName: String(getCell('P NAME')).trim(),
-          description: String(getCellAny('P TYPE', 'PROJECT TYPE')).trim(),
-          streetNumber: String(getCell('P STREET NUMBER')).trim(),
-          streetName: String(getCell('P STREET NAME')).trim(),
-          city: String(getCell('P CITY')).trim(),
-          county: String(getCell('COUNTY')).trim(),
-          marketArea: String(getCell('MARKET AREA')).trim(),
-          insiderDate: latestInsider,
-          lastInsiderDate: previousInsider,
-          salePrice: salePriceStr,
-          saleDate,
-          landSalePrice,
-          landSaleDate,
-          comments,
-          units: unitsStr,
-          pricePerUnit: pricePerUnit > 0 ? String(pricePerUnit) : '',
-          acres: String(getCell('# ACRES')).trim(),
-          yearBuilt: yearFromValue(getCellAny('YEAR BUILT', 'BUILT\\COMPLETE', 'ORIGINALLY BUILT')),
-          address: String(getCell('P STREET NUMBER')).trim() + ' ' + String(getCell('P STREET NAME')).trim(),
-          zip: String(getCell('P ZIP')).trim(),
-          district: String(getCell('DISTRICT2')).trim(),
-          landLot: String(getCellAny('LAND LOT', 'LANDLOT')).trim(),
-          parcel: String(getCell('PARCEL')).trim(),
-          taxOwner: String(getCell('TAX OWNER')).trim(),
-          owner: String(getCell('OWNER')).trim(),
-          ownerAttention: String(getCellAny('OWNER2\\ATTENTION', 'ATTENTION')).trim(),
-          seller: String(getCellAny('SELLER\\FORECLOSEE', 'SELLER')).trim(),
-          loanAmount: String(getCellAny('$ LOAN', 'PERMANENT LOAN')).trim(),
-          sourceFile: String(getCell(SOURCE_HEADER)).trim(),
-          raw: row
-        };
-      }).filter((p: Property) => p.propertyName);
-      
-      const alpha = (a: string, b: string) => a.localeCompare(b, 'en', { sensitivity: 'base' });
-      const cities = ([...new Set(processedProperties.map((p: Property) => p.city).filter(Boolean))] as string[]).sort(alpha);
-      const counties = ([...new Set(processedProperties.map((p: Property) => p.county).filter(Boolean))] as string[]).sort(alpha);
-      const marketAreas = ([...new Set(processedProperties.map((p: Property) => p.marketArea).filter(Boolean))] as string[]).sort(alpha);
-      const dates = ([...new Set(processedProperties.map((p: Property) => p.insiderDate).filter(Boolean))] as string[])
-        .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-      
-      const prices = processedProperties.map((p: Property) => parseFloat(p.salePrice?.replace(/[^0-9.-]/g, '') || '0')).filter((p: number) => p > 0);
-      const priceRange = prices.length > 0 ? { min: Math.min(...prices), max: Math.max(...prices) } : { min: 0, max: 0 };
-      
-      const unitsValues = processedProperties.map((p: Property) => parseInt(p.units?.replace(/[^0-9]/g, '') || '0')).filter((u: number) => u > 0);
-      const unitsRange = unitsValues.length > 0 ? { min: Math.min(...unitsValues), max: Math.max(...unitsValues) } : { min: 0, max: 0 };
-      
-      setProperties(processedProperties);
-      setFilteredProperties(processedProperties);
-      setFilters({ cities, counties, marketAreas, dates, priceRange, unitsRange });
+      const { data } = await axios.get<SearchMeta>(`${API_URL}/api/search/${databaseType}/meta`);
+      if (!data.total) return;
+      setLatestUploadName(data.latestUploadName);
+      if (data.filters) setFilters(data.filters);
+      setMeta(data);
     } catch (err) {
       console.error('Error loading latest upload:', err);
     }
   };
 
-  const applyPropertyFilters = () => {
-    let filtered = [...properties];
-    
-    // Text search across ALL fields in the property
-    if (searchQuery.trim()) {
-      const tokens = searchTokens(searchQuery);
-      // Parcel numbers are typed with or without spacing (111012003 vs 111 012 003)
-      const digits = searchQuery.replace(/\D/g, '');
-      const asParcel = digits.length >= 6 && /^[\d\s-]+$/.test(searchQuery.trim());
-      // Count how many words each property matches; show full matches, otherwise the best
-      // partial matches (at least one word, or half the words for longer queries) so a search
-      // like "the mason augusta" never comes back empty when the property exists.
-      const scored = filtered.map(p => {
-        if (asParcel && String(p.parcel || '').replace(/\D/g, '').includes(digits)) return { p, hits: tokens.length };
-        // Search across all string values in the property object
-        const allValues = canonicalText(
-          Object.values(p)
-            .filter(v => typeof v === 'string')
-            .join(' ')
-        );
-        const words = wordsOf(
-          canonicalText(
-            [p.propertyName, p.city, p.county, p.owner, p.seller, p.address, p.streetName, p.marketArea, p.comments]
-              .map(v => String(v || ''))
-              .join(' ')
-          )
-        );
-        const hits = tokens.filter(token => tokenMatches(token, allValues, words)).length;
-        return { p, hits };
-      });
-      const best = Math.max(0, ...scored.map(s => s.hits));
-      const needed = best === tokens.length ? best : Math.max(1, Math.ceil(tokens.length / 2));
-      filtered = best >= needed ? scored.filter(s => s.hits === best).map(s => s.p) : [];
-      setPartialMatch(filtered.length > 0 && best < tokens.length);
-    } else {
-      setPartialMatch(false);
-    }
-    
-    // Location filters
-    if (selectedCity) filtered = filtered.filter(p => p.city === selectedCity);
-    if (selectedCounties.length > 0) filtered = filtered.filter(p => selectedCounties.includes(p.county));
-    if (selectedMarketArea) filtered = filtered.filter(p => p.marketArea === selectedMarketArea);
-    const zips = selectedZipcode.split(/[\s,;]+/).map((z) => z.trim().slice(0, 5)).filter(Boolean);
-    if (zips.length) {
-      filtered = filtered.filter(p => zips.includes(String(p.zip || '').trim().slice(0, 5)));
-    }
-    if (selectedDistrict) {
-      const target = String(selectedDistrict).trim();
-      filtered = filtered.filter(p => String(p.district || '').trim() === target);
-    }
-    if (selectedLandLot) {
-      const target = String(selectedLandLot).trim();
-      filtered = filtered.filter(p => String(p.landLot || '').trim() === target);
-    }
-    if (streetFilter) {
-      const target = streetFilter.trim().toLowerCase();
-      filtered = filtered.filter(p =>
-        String(p.streetName || '').toLowerCase().includes(target) ||
-        String(p.address || '').toLowerCase().includes(target)
-      );
-    }
-    if (selectedDate) filtered = filtered.filter(p => p.insiderDate === selectedDate);
-    
-    // Entity filters (partial, case-insensitive name matching)
-    const nameMatch = (value: string | undefined, needle: string) =>
-      String(value || '').toLowerCase().includes(needle.trim().toLowerCase());
-    const matchesOwner = (p: Property, needle: string) =>
-      nameMatch(p.owner, needle) || nameMatch(p.taxOwner, needle) || nameMatch(p.ownerAttention, needle);
-    if (ownerFilter) filtered = filtered.filter(p => matchesOwner(p, ownerFilter));
-    if (selectedSeller) filtered = filtered.filter(p => nameMatch(p.seller, selectedSeller));
-    if (entityFilter) filtered = filtered.filter(p => matchesOwner(p, entityFilter) || nameMatch(p.seller, entityFilter));
-    
-    // Numeric range helpers
-    const parseNum = (val: string | undefined) => parseFloat(String(val || '').replace(/[^0-9.-]/g, '') || '0');
-    const parseInt_ = (val: string | undefined) => parseInt(String(val || '').replace(/[^0-9]/g, '') || '0');
-    
-    // Sale price range
-    if (minPrice) filtered = filtered.filter(p => parseNum(p.salePrice) >= parseFloat(minPrice));
-    if (maxPrice) filtered = filtered.filter(p => parseNum(p.salePrice) <= parseFloat(maxPrice));
-    
-    // Price per unit range (calculated: sale price / units)
-    if (minPricePerUnit) filtered = filtered.filter(p => parseNum(p.pricePerUnit) >= parseFloat(minPricePerUnit));
-    if (maxPricePerUnit) filtered = filtered.filter(p => {
-      const ppu = parseNum(p.pricePerUnit);
-      return ppu > 0 && ppu <= parseFloat(maxPricePerUnit);
-    });
-    
-    // Land price range
-    if (minLandPrice) filtered = filtered.filter(p => parseNum(p.landSalePrice) >= parseFloat(minLandPrice));
-    if (maxLandPrice) filtered = filtered.filter(p => parseNum(p.landSalePrice) <= parseFloat(maxLandPrice));
-    
-    // Units range
-    if (minUnits) filtered = filtered.filter(p => parseInt_(p.units) >= parseInt(minUnits));
-    if (maxUnits) filtered = filtered.filter(p => parseInt_(p.units) <= parseInt(maxUnits));
-    
-    // Acres range
-    if (minAcres) filtered = filtered.filter(p => parseNum(p.acres) >= parseFloat(minAcres));
-    if (maxAcres) filtered = filtered.filter(p => parseNum(p.acres) <= parseFloat(maxAcres));
-    
-    // Year built range
-    if (minYearBuilt) filtered = filtered.filter(p => parseInt_(p.yearBuilt) >= parseInt(minYearBuilt));
-    if (maxYearBuilt) filtered = filtered.filter(p => parseInt_(p.yearBuilt) <= parseInt(maxYearBuilt));
-    
-    // Date range helper
-    const inDateRange = (dateStr: string, after: string, before: string) => {
-      const t = new Date(dateStr).getTime();
-      if (isNaN(t)) return false;
-      if (after && t < new Date(after).getTime()) return false;
-      if (before && t > new Date(before).getTime()) return false;
-      return true;
-    };
+  // Everything the server needs to run the current search (names match backend SearchParams).
+  const searchParams = () => ({
+    searchQuery, selectedCity, selectedCounties, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot,
+    streetFilter, selectedDate, ownerFilter, selectedSeller, entityFilter, minPrice, maxPrice, minPricePerUnit, maxPricePerUnit,
+    minLandPrice, maxLandPrice, minUnits, maxUnits, minAcres, maxAcres, minYearBuilt, maxYearBuilt, saleDateAfter, saleDateBefore,
+    insiderDateAfter, insiderDateBefore, landSaleDateAfter, landSaleDateBefore, aiFields, aiRanges, sort,
+  });
 
-    // Date filters
-    if (saleDateAfter || saleDateBefore) {
-      filtered = filtered.filter(p => p.saleDate && inDateRange(p.saleDate, saleDateAfter, saleDateBefore));
+  const applyPropertyFilters = async () => {
+    if (!meta) return;
+    const seq = ++searchSeq.current;
+    try {
+      const { data } = await axios.post(`${API_URL}/api/search/${databaseType}`, { params: searchParams(), offset: 0, limit: PAGE_SIZE });
+      if (seq !== searchSeq.current) return; // a newer search already answered
+      resultCount.current = data.total;
+      setResultTotal(data.total);
+      setBrowseMax(data.browseMax ?? 1000);
+      setPartialMatch(Boolean(data.partial));
+      setResultStats(data.stats ?? EMPTY_STATS);
+      setTopOwners(data.topOwners ?? []);
+      setFilteredProperties(data.rows ?? []);
+    } catch (err) {
+      if (seq === searchSeq.current) console.error('Search failed:', err);
     }
-    if (insiderDateAfter || insiderDateBefore) {
-      filtered = filtered.filter(p => p.insiderDate && inDateRange(p.insiderDate, insiderDateAfter, insiderDateBefore));
-    }
-    if (landSaleDateAfter || landSaleDateBefore) {
-      filtered = filtered.filter(p => p.landSaleDate && inDateRange(p.landSaleDate, landSaleDateAfter, landSaleDateBefore));
-    }
-
-    // Ask AI: arbitrary columns by header name
-    const colIdx = (name: string) => excelHeaders.findIndex(h => h && h.trim().toUpperCase() === name.trim().toUpperCase());
-    for (const [col, text] of Object.entries(aiFields)) {
-      const idx = colIdx(col);
-      if (idx < 0 || !text) continue;
-      const needle = String(text).toLowerCase();
-      filtered = filtered.filter(p => {
-        const v = String(p.raw?.[idx] ?? '').trim();
-        return needle === '*' ? v !== '' : v.toLowerCase().includes(needle);
-      });
-    }
-    for (const [col, r] of Object.entries(aiRanges)) {
-      const idx = colIdx(col);
-      if (idx < 0 || !r) continue;
-      filtered = filtered.filter(p => {
-        const n = parseNum(String(p.raw?.[idx] ?? ''));
-        if (!n && String(p.raw?.[idx] ?? '').trim() === '') return false;
-        return (r.min == null || n >= r.min) && (r.max == null || n <= r.max);
-      });
-    }
-
-    if (sort) {
-      const { key, dir } = sort;
-      const num = (p: Property) => parseNum(p[key]);
-      const time = (p: Property) => new Date(p[key] || '').getTime() || 0;
-      const sgn = dir === 'asc' ? 1 : -1;
-      filtered = [...filtered].sort((a, b) => {
-        if (NUMERIC_SORT.includes(key)) return sgn * (num(a) - num(b));
-        if (DATE_SORT.includes(key)) return sgn * (time(a) - time(b));
-        return sgn * String(a[key] || '').localeCompare(String(b[key] || ''));
-      });
-    }
-    resultCount.current = filtered.length;
-    setFilteredProperties(filtered);
   };
+
+  // "Show more" asks the server for the next page of the same search.
+  const loadMoreRows = async () => {
+    if (loadingMore || !meta) return;
+    const seq = searchSeq.current;
+    setLoadingMore(true);
+    try {
+      const { data } = await axios.post(`${API_URL}/api/search/${databaseType}`, { params: searchParams(), offset: filteredProperties.length, limit: PAGE_SIZE });
+      if (seq === searchSeq.current) setFilteredProperties((rows) => [...rows, ...(data.rows ?? [])]);
+    } catch (err) {
+      console.error('Loading more results failed:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+  useEffect(() => {
+    if (visibleRows > filteredProperties.length && filteredProperties.length < Math.min(resultTotal, browseMax)) loadMoreRows();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleRows, filteredProperties.length, resultTotal]);
+
 
   const toggleSort = (key: SortKey) =>
     setSort(s => (s?.key === key ? (s.dir === 'desc' ? { key, dir: 'asc' } : null) : { key, dir: NUMERIC_SORT.includes(key) || DATE_SORT.includes(key) ? 'desc' : 'asc' }));
 
   const sortMark = (key: SortKey) => (sort?.key === key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
 
-  // Stat cards above the results table — total volume, units, median $/unit, largest sale —
-  // computed from whatever's currently filtered, so they update live as the person narrows in.
-  const resultStats = useMemo(() => {
-    // Land is sized by acres, not units — its "units" column is building square feet, if anything.
-    const byAcre = databaseType === 'land';
-    let volume = 0, unitTotal = 0;
-    const ppus: number[] = [];
-    let biggest: Property | null = null;
-    for (const p of filteredProperties) {
-      const price = Number(p.salePrice);
-      if (price > 0) {
-        volume += price;
-        if (!biggest || price > Number(biggest.salePrice)) biggest = p;
-      }
-      const size = cleanNumber(byAcre ? p.acres : p.units);
-      if (size) unitTotal += size;
-      const ppu = byAcre ? (price > 0 && size ? price / size : null) : cleanNumber(p.pricePerUnit);
-      if (ppu) ppus.push(ppu);
-    }
-    ppus.sort((a, b) => a - b);
-    const median = ppus.length ? ppus[Math.floor(ppus.length / 2)] : 0;
-    return { volume, unitTotal, median, biggest };
-  }, [filteredProperties, databaseType]);
+  // Stat cards above the results table (total volume, size, median $/unit, largest sale) come with each search.
 
   const activeFilterCount = [
     selectedCity, selectedMarketArea, selectedZipcode, selectedDistrict, selectedLandLot, selectedSeller,
@@ -671,7 +313,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
   ].filter(Boolean).length + selectedCounties.length + Object.keys(aiFields).length + Object.keys(aiRanges).length;
 
   const exportExcel = async () => {
-    if (exporting || filteredProperties.length === 0) return;
+    if (exporting || resultTotal === 0) return;
     setExporting(true);
     try {
       const columns = [
@@ -696,7 +338,9 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         { key: 'lastInsiderDate', label: 'Previous Insider Date' },
         { key: 'comments', label: 'Comments' },
       ];
-      const rows = filteredProperties.map((p) => ({
+      const { data: exp } = await axios.post(`${API_URL}/api/search/${databaseType}/export`, { params: searchParams() });
+      if (exp.capped) alert(`This search has ${exp.total.toLocaleString()} results; the export includes the first ${exp.max.toLocaleString()}. Narrow the search to export the rest.`);
+      const rows = (exp.rows as Property[]).map((p) => ({
         propertyName: primaryName(p.propertyName),
         formerNames: aliasNames(p.propertyName).replace(/^formerly /, ''),
         address: titleCase(p.address),
@@ -734,19 +378,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
     }
   };
 
-  const newThisWeek = useMemo(() => {
-    const counts = new Map<string, number>();
-    const today = Date.now();
-    for (const p of properties) {
-      const t = new Date(p.insiderDate).getTime();
-      if (p.insiderDate && !isNaN(t) && t <= today) counts.set(p.insiderDate, (counts.get(p.insiderDate) || 0) + 1);
-    }
-    let best: { date: string; count: number } | null = null;
-    for (const [date, count] of counts) {
-      if (!best || new Date(date).getTime() > new Date(best.date).getTime()) best = { date, count };
-    }
-    return best;
-  }, [properties]);
+  const newThisWeek = meta?.newThisWeek ?? null;
 
   // The row card is this week's record; the one-page report lives on the archive property.
   // Find it by parcel, then by name/address, and take the single best match.
@@ -850,11 +482,8 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
       const label = (DATABASE_OPTIONS.find((o) => o.value === databaseType)?.label || databaseType).replace(/^[^A-Za-z]+/, '');
       const rs = recentInsiderStats;
       const count = (n: number) => `${n.toLocaleString()} propert${n !== 1 ? 'ies' : 'y'}`;
-      const tally = (key: 'county' | 'zip' | 'city') => {
-        const m = new Map<string, number>();
-        properties.forEach((p) => { const k = String(p[key] || '').trim(); if (k) m.set(k, (m.get(k) || 0) + 1); });
-        return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([label, n]) => ({ label, value: count(n) }));
-      };
+      const tally = (key: 'countyNamed' | 'zipNamed' | 'city') =>
+        (meta?.tallies?.[key] ?? []).slice(0, 10).map(([label, n]) => ({ label, value: count(n) }));
       const snapshot = {
         database: label,
         scope: 'Market snapshot',
@@ -871,9 +500,9 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         sections: [
           { title: 'Recent activity by county', rows: rs.topCounties.map((c) => ({ label: c.county, value: count(c.count), extra: c.volume > 0 ? formatCompactCurrency(c.volume) : undefined })) },
           { title: 'Recent activity by city', rows: rs.topCities.map((c) => ({ label: c.city, value: count(c.count) })) },
-          { title: 'Top owners, sales in the last 3 years', note: filteredProperties.length !== properties.length ? 'Within the current search filters' : undefined, rows: topOwners.slice(0, 10).map((o) => ({ label: o.owner, value: count(o.count), extra: o.volume > 0 ? formatCompactCurrency(o.volume) : undefined })) },
-          { title: `All ${properties.length.toLocaleString()} properties by county`, rows: tally('county') },
-          { title: 'By zip code', rows: tally('zip') },
+          { title: 'Top owners, sales in the last 3 years', note: resultTotal !== totalProperties ? 'Within the current search filters' : undefined, rows: topOwners.slice(0, 10).map((o) => ({ label: o.owner, value: count(o.count), extra: o.volume > 0 ? formatCompactCurrency(o.volume) : undefined })) },
+          { title: `All ${totalProperties.toLocaleString()} properties by county`, rows: tally('countyNamed') },
+          { title: 'By zip code', rows: tally('zipNamed') },
           { title: 'By city', rows: tally('city') },
         ],
       };
@@ -1192,7 +821,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         </div>
 
         {/* Recent Insider Activity Stats (dashboard view) */}
-        {activeView === 'dashboard' && properties.length > 0 && recentInsiderStats.propertyCount > 0 && (
+        {activeView === 'dashboard' && totalProperties > 0 && recentInsiderStats.propertyCount > 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
             <div className="flex items-center gap-3 mb-4">
               <BarChart3 className="w-6 h-6 text-db-navy" />
@@ -1330,7 +959,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         )}
 
         {/* Dashboard empty state */}
-        {activeView === 'dashboard' && properties.length === 0 && (
+        {activeView === 'dashboard' && totalProperties === 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-12 text-center text-gray-500 mb-6">
             <Database className="w-12 h-12 mx-auto text-gray-300 mb-3" />
             No data loaded for this database yet.
@@ -1341,7 +970,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         {activeView === 'dashboard' && (
         <div>
         {/* Top Owners (last 3 years) */}
-        {properties.length > 0 && (
+        {totalProperties > 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
             <div className="flex items-center gap-3 mb-4">
               <Building2 className="w-6 h-6 text-db-navy" />
@@ -1349,14 +978,14 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                 <h3 className="text-lg font-bold text-gray-800">Top Owners</h3>
                 <p className="text-sm text-gray-500">
                   Based on sales in the most recent 3 years
-                  {filteredProperties.length !== properties.length && ' (within current search filters)'}
+                  {resultTotal !== totalProperties && ' (within current search filters)'}
                 </p>
               </div>
             </div>
             {topOwners.length === 0 ? (
               <p className="text-sm text-gray-500">
-                No sales with owner information in the last 3 years{filteredProperties.length !== properties.length ? ' within the current search filters' : ''}.
-                {filteredProperties.length !== properties.length && (
+                No sales with owner information in the last 3 years{resultTotal !== totalProperties ? ' within the current search filters' : ''}.
+                {resultTotal !== totalProperties && (
                   <button onClick={clearPropertyFilters} className="ml-2 text-db-navy hover:underline">Clear filters</button>
                 )}
               </p>
@@ -1383,7 +1012,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         )}
 
         {/* County and Zip Code Breakdown */}
-        {properties.length > 0 && (
+        {totalProperties > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             {/* County Breakdown */}
             <div className="bg-white rounded-2xl shadow-lg p-6">
@@ -1393,11 +1022,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
               </div>
               <div className="space-y-2">
                 {(() => {
-                  const countyCounts = properties.reduce((acc, p) => {
-                    const county = p.county || 'Unknown';
-                    acc[county] = (acc[county] || 0) + 1;
-                    return acc;
-                  }, {} as Record<string, number>);
+                  const countyCounts = Object.fromEntries(meta?.tallies?.county ?? []) as Record<string, number>;
                   
                   return Object.entries(countyCounts)
                     .sort(([, a], [, b]) => b - a)
@@ -1424,11 +1049,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
               </div>
               <div className="space-y-2">
                 {(() => {
-                  const zipCounts = properties.reduce((acc, p) => {
-                    const zip = p.zip || 'Unknown';
-                    acc[zip] = (acc[zip] || 0) + 1;
-                    return acc;
-                  }, {} as Record<string, number>);
+                  const zipCounts = Object.fromEntries(meta?.tallies?.zip ?? []) as Record<string, number>;
                   
                   return Object.entries(zipCounts)
                     .sort(([, a], [, b]) => b - a)
@@ -1450,7 +1071,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
         )}
 
         {/* Latest Insider Dates from Last Upload */}
-        {properties.length > 0 && (
+        {totalProperties > 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
             <div className="flex items-center gap-3 mb-4">
               <Calendar className="w-6 h-6 text-db-navy" />
@@ -1463,12 +1084,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
             </div>
             <div className="space-y-2">
                 {(() => {
-                  const dateCounts = properties.reduce((acc, p) => {
-                    if (p.insiderDate) {
-                      acc[p.insiderDate] = (acc[p.insiderDate] || 0) + 1;
-                    }
-                    return acc;
-                  }, {} as Record<string, number>);
+                  const dateCounts = Object.fromEntries(meta?.tallies?.insiderDate ?? []) as Record<string, number>;
 
                   const startOfToday = new Date();
                   startOfToday.setHours(0, 0, 0, 0);
@@ -1682,7 +1298,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
 
             {aiHistory && !browseWithAnswer ? (
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
-                <span>The answer above comes from the archive of every weekly file. This week's full list of {properties.length.toLocaleString()} properties is hidden so it isn't mistaken for part of the answer.</span>
+                <span>The answer above comes from the archive of every weekly file. This week's full list of {totalProperties.toLocaleString()} properties is hidden so it isn't mistaken for part of the answer.</span>
                 <button onClick={() => setBrowseWithAnswer(true)} className="text-db-navy hover:underline font-medium whitespace-nowrap">Browse this week's list</button>
               </div>
             ) : (
@@ -1709,7 +1325,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
               </button>
               <button
                 onClick={exportExcel}
-                disabled={exporting || filteredProperties.length === 0}
+                disabled={exporting || resultTotal === 0}
                 title="Download the rows shown below as an Excel file"
                 className="px-3 py-2.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-sm font-medium flex items-center gap-1.5 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -1979,7 +1595,7 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
             )}
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm text-gray-600">
-                Showing <span className="font-semibold">{filteredProperties.length.toLocaleString()}</span> of <span className="font-semibold">{properties.length.toLocaleString()}</span> properties
+                Showing <span className="font-semibold">{resultTotal.toLocaleString()}</span> of <span className="font-semibold">{totalProperties.toLocaleString()}</span> properties
                 {partialMatch && <span className="ml-2 text-amber-700">· no exact match for every word — showing the closest matches</span>}
               </p>
               {(activeFilterCount > 0 || propertySearchText) && (
@@ -2138,14 +1754,19 @@ function UserDashboard({ onOpenProperty, initialQuery }: { onOpenProperty: (type
                   ))}
                 </tbody>
               </table>
-              {filteredProperties.length > visibleRows && (
+              {Math.min(resultTotal, browseMax) > visibleRows && (
                 <div className="flex items-center justify-center gap-4 py-4 border-t border-gray-200 text-sm">
-                  <span className="text-gray-500">Showing {visibleRows.toLocaleString()} of {filteredProperties.length.toLocaleString()}</span>
+                  <span className="text-gray-500">Showing {visibleRows.toLocaleString()} of {resultTotal.toLocaleString()}</span>
                   <button onClick={() => setVisibleRows(v => v + PAGE_SIZE)} className="px-4 py-2 rounded-lg border border-gray-300 font-medium text-gray-700 hover:bg-gray-50">
-                    Show {Math.min(PAGE_SIZE, filteredProperties.length - visibleRows)} more
+                    {loadingMore ? 'Loading…' : `Show ${Math.min(PAGE_SIZE, Math.min(resultTotal, browseMax) - visibleRows)} more`}
                   </button>
-                  <button onClick={() => setVisibleRows(filteredProperties.length)} className="text-db-navy hover:underline">Show all</button>
+                  <button onClick={() => setVisibleRows(Math.min(resultTotal, browseMax))} className="text-db-navy hover:underline">{resultTotal > browseMax ? `Show first ${browseMax.toLocaleString()}` : 'Show all'}</button>
                 </div>
+              )}
+              {resultTotal > browseMax && visibleRows >= browseMax && (
+                <p className="mt-4 text-center text-sm text-db-muted">
+                  Showing the first {browseMax.toLocaleString()} of {resultTotal.toLocaleString()} results. Narrow the search (a city, county, zip or date range) to see the rest.
+                </p>
               )}
             </div>
             </>

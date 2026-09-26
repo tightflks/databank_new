@@ -22,8 +22,12 @@ property pages, PDF reports and "Ask AI" search. Customers sign up for a 30-day 
 - `backend/src/sessions.ts` — SQLite-backed sessions for both admin and customers.
 - `backend/src/dropbox.ts` — weekly CSVs from Dropbox → databases; `/api/dropbox/*`.
 - `backend/src/photos.ts`, `notesAi.ts`, `stats.ts`, `usage.ts`, `mail.ts` (nodemailer).
-- `frontend/src/App.tsx` — routing/shell; `UserDashboard.tsx` — customer search (filters
-  client-side over `/api/uploads/:id/data`); `PropertyPage.tsx`; `Admin*.tsx`, `FeedbackList.tsx`.
+- `backend/src/search/` — customer search runs here: `core.ts` (row mapping + filters, moved
+  from UserDashboard), `routes.ts` (`/api/search/:db/meta`, `/api/search/:db` one page at a
+  time, `/export` capped). `/api/uploads/:id/data` and `/preview` are admin-only.
+- `backend/src/backup.ts` (nightly DB → Dropbox), `alerts.ts` (error emails).
+- `frontend/src/App.tsx` — routing/shell; `UserDashboard.tsx` — customer search UI (asks
+  `/api/search`); `PropertyPage.tsx`; `Admin*.tsx`, `FeedbackList.tsx`.
 - `frontend/src/SearchComps.tsx` — old screen, not imported anywhere.
 - SQLite file lives under `DATA_DIR` (Railway volume).
 
@@ -33,8 +37,8 @@ property pages, PDF reports and "Ask AI" search. Customers sign up for a 30-day 
   Run `npm run build` too — `tsc --noEmit` alone missed a test-file error that broke a deploy.
 - Frontend: `cd frontend && npm test && npm run build` (vitest, `tsc -b && vite build`).
 
-## Known open items (from the Sep 25 security review)
-- `/api/uploads/:id/data` still sends every row (contact columns stripped) — needs
-  server-side search + paging.
-- Dependency upgrades (`xlsx` 0.18.5, express, puppeteer), one shared Puppeteer browser,
-  DB backups, error alerts.
+## Known open items
+- Dependency upgrades (`xlsx` 0.18.5 needs cdn.sheetjs.com, express, puppeteer), one shared
+  Puppeteer browser.
+- Weekly CSVs and history come from `tools/rxd/*.py` in tareq-dashboard (Devin); the site's
+  Excel backup (`backfillWeekFromExcel`) covers missed weeks but not history.

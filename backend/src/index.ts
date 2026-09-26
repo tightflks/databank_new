@@ -12,6 +12,7 @@ import * as dropboxAsk from './dropbox';
 import { registerAuthRoutes, requireAdmin, rateLimit } from './auth';
 import { registerBackupRoutes, startBackups } from './backup';
 import { errorMiddleware, installProcessAlerts } from './alerts';
+import { registerSearchRoutes } from './search/routes';
 
 installProcessAlerts();
 import { sendFeedbackMail, mailConfigured, FEEDBACK_TO } from './mail';
@@ -2048,7 +2049,8 @@ function stripSensitiveColumns(data: unknown[][]): unknown[][] {
   return data.map((row) => keepIdx.map((i) => row[i]));
 }
 
-app.get('/api/uploads/:id/data', requireUser, (req: Request, res: Response) => {
+// Admin only: the whole file in one response. Customers search through /api/search (one page at a time).
+app.get('/api/uploads/:id/data', requireAdmin, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2768,7 +2770,7 @@ Respond with ONLY a JSON object: "mode", the applicable fields (omit ones that d
 });
 
 // Preview HTML report from a stored upload (no re-upload required)
-app.get('/api/uploads/:id/preview', requireUser, (req: Request, res: Response) => {
+app.get('/api/uploads/:id/preview', requireAdmin, (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -3034,6 +3036,10 @@ registerNotesAiRoutes(app, db);
 registerStatsRoutes(app, db);
 registerUsageRoutes(app, db);
 registerBackupRoutes(app, db);
+registerSearchRoutes(app, {
+  latestUpload: (databaseType) => (getUploadsFromDb(1, 0, databaseType)[0] as { id: number; original_filename: string } | undefined) ?? null,
+  uploadData: (uploadId) => stripSensitiveColumns(getExcelDataFromDb(uploadId)) as (string | number | null)[][],
+});
 
 // Serve the built frontend (production)
 const frontendDist = path.join(__dirname, '../../frontend/dist');

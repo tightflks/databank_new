@@ -1,4 +1,6 @@
-import { gzipSync } from 'zlib';
+import { createGzip } from 'zlib';
+import { pipeline } from 'stream/promises';
+import Database from 'better-sqlite3';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -7,8 +9,9 @@ import { requireAdmin } from './auth';
 import { dropboxConfigured, listFolder, uploadLarge, deletePath } from './dropbox';
 
 // Nightly copy of the site's own SQLite database (accounts, sessions, feedback, photos, usage)
-// to Dropbox. db.backup() takes a consistent snapshot while the site keeps running; the copy
-// is gzipped and the last KEEP_DAYS are kept. Restore: download, gunzip, put it at
+// to Dropbox. db.backup() takes a consistent snapshot while the site keeps running. The weekly
+// files synced from Dropbox are dropped from the copy (they are re-fetched from Dropbox on
+// restore, and made the first backup 570 MB); the copy is gzipped and the last KEEP_DAYS kept. Restore: download, gunzip, put it at
 // $DATA_DIR/databank.db and redeploy.
 
 export const BACKUP_ROOT = '/GrooveSolutions/Databank/_archive/_site_backups';
@@ -23,7 +26,14 @@ export async function backupDatabase(db: { backup: (dest: string) => Promise<unk
   const tmp = path.join(os.tmpdir(), `databank-backup-${process.pid}.db`);
   try {
     await db.backup(tmp);
-    const gz = gzipSync(fs.readFileSync(tmp));
+    const copy = new Database(tmp);
+    try {
+      copy.exec("DELETE FROM excel_data WHERE upload_id IN (SELECT id FROM uploads WHERE filename LIKE 'dropbox:%')");
+    } catch { /* no uploads tables (tests) */ }
+    copy.exec('VACUUM');
+    copy.close();
+    await pipeline(fs.createReadStream(tmp), createGzip(), fs.createWriteStream(`${tmp}.gz`));
+    const gz = fs.readFileSync(`${tmp}.gz`);
     const file = `${BACKUP_ROOT}/databank-${day}.db.gz`;
     await uploadLarge(file, gz);
     const old = (await listFolder(BACKUP_ROOT))
@@ -36,6 +46,7 @@ export async function backupDatabase(db: { backup: (dest: string) => Promise<unk
     return { file, bytes: gz.length };
   } finally {
     fs.rmSync(tmp, { force: true });
+    fs.rmSync(`${tmp}.gz`, { force: true });
   }
 }
 
